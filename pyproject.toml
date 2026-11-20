@@ -1,0 +1,28 @@
+# Racine de l'espace de travail uv : elle ne contient pas de code.
+# Chaque joueur a son paquet dans players/<prenom>/ ; un seul uv.lock pour tous.
+
+[tool.uv.workspace]
+members = ["players/*"]
+
+[dependency-groups]
+dev = ["pytest>=8.3", "ruff>=0.8"]
+
+# PyTorch en version CPU sous Linux (la CI) : évite de télécharger CUDA pour rien.
+# macOS et Windows utilisent les paquets PyPI normaux.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib"

@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Expériences : à garder en local ou dans WandB, jamais dans git
+wandb/
+runs/
+logs/
+checkpoints/
+*.mp4
+*.gif
+
+# Modèles : seul le modèle final d'une phase, dans players/<prenom>/models/
+*.zip
+*.pt
+*.pth
+!players/*/models/*.zip
+!players/*/models/*.pt
+!players/*/models/*.pth
+
+# Secrets et éditeurs
+.env
+.netrc
+.DS_Store
+.idea/
+.vscode/

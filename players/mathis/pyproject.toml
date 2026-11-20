@@ -8,6 +8,7 @@ dependencies = [
     "gymnasium[mujoco]>=1.0",
     "mujoco>=3.2",
     "numpy>=2.0",
+    "pillow>=10",
     "stable-baselines3>=2.4",
     "torch>=2.5",
     "wandb>=0.18",

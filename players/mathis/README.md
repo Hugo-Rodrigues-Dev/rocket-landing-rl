@@ -14,7 +14,7 @@ Environnement et agents de Mathis. Voir le [contrat](../../CONTRACT.md) pour le 
 |---|---|---|
 | 1 | Scène MuJoCo : mer, barge, fusée | ✅ |
 | 2 | Moteur : poussée et tuyère | ✅ |
-| 3 | Enveloppe Gymnasium : espaces, `reset`, `step`, fins d'épisode | |
+| 3 | Enveloppe Gymnasium : espaces, `reset`, `step`, fins d'épisode | ✅ |
 | 4 | Récompense, vérifiée avec un contrôleur PD de référence | |
 | 5 | Premier apprentissage (phase 0 facilitée, puis complète) | |
 
@@ -34,11 +34,18 @@ Captures rangées dans [`docs/captures/<etape>/`](docs/captures/), régénérée
 |---|---|---|
 | ![Vol stationnaire](docs/captures/etape-2/vol-stationnaire.png) | ![Tuyère orientée](docs/captures/etape-2/tuyere-orientee.png) | ![Bascule](docs/captures/etape-2/basculement.png) |
 
+### Étape 3 : l'environnement (20/11/2026)
+
+| 8 départs du contrat, poussée = poids, sans pilotage : tous échouent | Moteur coupé : crash |
+|---|---|
+| ![Départs aléatoires](docs/captures/etape-3/departs-aleatoires.png) | ![Chute libre](docs/captures/etape-3/chute-libre-crash.png) |
+
 ## Lancer
 
 ```bash
 uv run python -m mujoco.viewer --mjcf players/mathis/src/rocket_mathis/assets/scene.xml   # menu Key : petite_chute, descente
 uv run pytest players/mathis
+# environnement : gymnasium.make("rocket_mathis/RocketLanding-v0", config=EnvConfig(phase=0))
 # entraînement :
 # évaluation (graines 10 000 à 10 099) :
 ```
@@ -58,3 +65,13 @@ uv run pytest players/mathis
 - Poussée appliquée au pivot de la tuyère, 3,85 m sous le centre de masse : une tuyère positive fait tourner la fusée autour de −x ou −y.
 - Vérifié : vol stationnaire à T = m·g, +1 g à pleine poussée, couple conforme au calcul.
 - Piège MuJoCo : pour orienter la tuyère et la flamme à la volée, il faut remettre `geom_sameframe` à 0.
+
+### Étape 3 : l'environnement ([`env.py`](src/rocket_mathis/env.py), [`config.py`](src/rocket_mathis/config.py))
+
+- `RocketLandingEnv(MujocoEnv)`, enregistré sous `rocket_mathis/RocketLanding-v0`. Tous les paramètres du contrat sont dans `EnvConfig` (`phase=1` : barge mobile).
+- Observation de 21 valeurs, action de 3 valeurs dans [−1, 1] : détail en tête de `env.py`. Une action nulle donne poussée = poids.
+- Position mesurée au bas des pieds : altitude 0 = posée.
+- Fins d'épisode du contrat dans `info["outcome"]`, avec la vitesse et l'inclinaison au premier contact.
+- Récompense à 0 en attendant l'étape 4.
+- `check_env` passe, même graine = même épisode. Environ 1 600 pas/s sur un cœur, après avoir sorti du sous-pas le calcul de la direction de poussée et du décor.
+

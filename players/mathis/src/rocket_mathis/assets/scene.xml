@@ -107,6 +107,8 @@
       <site name="moteur" pos="0 0 -5.4" size="0.05"/>
       <camera name="tuyere" pos="0 -7 -6" xyaxes="1 0 0 0 0.1 1"/>
       <site name="centrale" pos="0 0 0" size="0.05"/>
+      <!-- Point de référence de la position : au niveau du bas des pieds (altitude 0 = posée). -->
+      <site name="base" pos="0 0 -6.1" size="0.05"/>
     </body>
   </worldbody>
 

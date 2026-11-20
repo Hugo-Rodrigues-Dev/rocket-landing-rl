@@ -49,22 +49,29 @@ class Engine:
         self.pivot = model.site_pos[self.site].copy()  # pivot de la tuyère, repère fusée
         # MuJoCo marque ces géométries « orientées comme le corps » et ignorerait alors geom_quat.
         model.geom_sameframe[[self.nozzle, self.flame]] = 0
+        self._thrust_body = np.zeros(3)  # poussée commandée, repère fusée
 
-    def apply(self, data: mujoco.MjData, thrust: float, gimbal) -> None:
-        """À appeler avant chaque mj_step : la force reste appliquée tant qu'on ne la change pas."""
+    def command(self, thrust: float, gimbal) -> None:
+        """Fixe la commande (une fois par décision de l'agent) et met à jour le décor."""
         thrust = float(np.clip(thrust, 0.0, T_MAX))
         gimbal = np.clip(np.asarray(gimbal, dtype=float), -GIMBAL_MAX, GIMBAL_MAX)
         u = thrust_direction(gimbal)
+        self._thrust_body = thrust * u
+        self._update_visuals(gimbal, u, thrust / T_MAX)
 
+    def push(self, data: mujoco.MjData) -> None:
+        """Applique la commande courante. À appeler avant chaque mj_step, car la fusée tourne."""
         # Force dans le repère du monde, appliquée au pivot : MuJoCo l'attend au centre de masse,
         # on ajoute donc le couple r × F (r = pivot - centre de masse).
-        rotation = data.xmat[self.body].reshape(3, 3)
-        force = rotation @ (thrust * u)
+        force = data.xmat[self.body].reshape(3, 3) @ self._thrust_body
         lever = data.site_xpos[self.site] - data.xipos[self.body]
         data.xfrc_applied[self.body, :3] = force
         data.xfrc_applied[self.body, 3:] = np.cross(lever, force)
 
-        self._update_visuals(gimbal, u, thrust / T_MAX)
+    def apply(self, data: mujoco.MjData, thrust: float, gimbal) -> None:
+        """Raccourci : command() puis push()."""
+        self.command(thrust, gimbal)
+        self.push(data)
 
     def _update_visuals(self, gimbal: np.ndarray, u: np.ndarray, throttle: float) -> None:
         q = gimbal_quat(gimbal)

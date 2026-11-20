@@ -21,11 +21,35 @@ from rocket_mathis.scene import load_model
 CAPTURES_DIR = Path(__file__).resolve().parents[2] / "docs" / "captures"
 
 
-def render(model: mujoco.MjModel, data: mujoco.MjData, camera: str, width=960, height=540) -> np.ndarray:
-    """Image RGB de la scène vue depuis une caméra nommée du XML."""
+def render(model, data, camera: str | mujoco.MjvCamera, width=960, height=540, trails=()) -> np.ndarray:
+    """Image RGB vue depuis une caméra du XML (son nom) ou une caméra libre (MjvCamera).
+
+    trails : liste de (points [N, 3], couleur RGBA) dessinés en petites sphères.
+    """
     with mujoco.Renderer(model, height, width) as renderer:
         renderer.update_scene(data, camera=camera)
+        scene = renderer.scene
+        for points, rgba in trails:
+            for p in points:
+                if scene.ngeom >= scene.maxgeom:
+                    break
+                mujoco.mjv_initGeom(
+                    scene.geoms[scene.ngeom],
+                    mujoco.mjtGeom.mjGEOM_SPHERE,
+                    np.array([0.6, 0, 0]),
+                    np.asarray(p, dtype=np.float64),
+                    np.eye(3).ravel(),
+                    np.asarray(rgba, dtype=np.float32),
+                )
+                scene.ngeom += 1
         return renderer.render()
+
+
+def free_camera(lookat, distance, azimuth, elevation) -> mujoco.MjvCamera:
+    cam = mujoco.MjvCamera()
+    cam.lookat[:] = lookat
+    cam.distance, cam.azimuth, cam.elevation = distance, azimuth, elevation
+    return cam
 
 
 def save(image: np.ndarray, step: str, name: str) -> Path:
@@ -81,7 +105,40 @@ def capture_engine(step: str) -> list[Path]:
     return paths
 
 
-STEPS = {"etape-1": capture_scene, "etape-2": capture_engine}
+OUTCOME_COLORS = {"landed": (0.2, 0.85, 0.3, 1), "timeout": (1, 0.8, 0.2, 1)}
+FAILURE_COLOR = (0.95, 0.25, 0.2, 1)
+
+
+def capture_env(step: str) -> list[Path]:
+    """Étape 3 : l'environnement Gymnasium (départs aléatoires du contrat, fin d'épisode)."""
+    from rocket_mathis.env import RocketLandingEnv  # import local : évite un cycle au chargement
+
+    env = RocketLandingEnv()
+    hover = np.zeros(3)  # poussée = poids : la fusée garde sa vitesse de départ
+    trails = []
+    for seed in range(8):
+        env.reset(seed=seed)
+        points, done = [], False
+        while not done:
+            points.append(env.data.site_xpos[env._base].copy())
+            _, _, terminated, truncated, info = env.step(hover)
+            done = terminated or truncated
+        color = OUTCOME_COLORS.get(info["outcome"], FAILURE_COLOR)
+        trails.append((points[::2], color))
+    cam = free_camera(lookat=(0, 0, 50), distance=230, azimuth=135, elevation=-12)
+    paths = [save(render(env.model, env.data, cam, trails=trails), step, "departs-aleatoires")]
+
+    env.reset(seed=1)
+    done = False
+    while not done:  # moteur coupé : chute libre jusqu'à l'échec
+        _, _, terminated, truncated, info = env.step(np.array([-1.0, 0, 0]))
+        done = terminated or truncated
+    paths.append(save(render(env.model, env.data, "large"), step, f"chute-libre-{info['outcome']}"))
+    env.close()
+    return paths
+
+
+STEPS = {"etape-1": capture_scene, "etape-2": capture_engine, "etape-3": capture_env}
 
 
 def main():

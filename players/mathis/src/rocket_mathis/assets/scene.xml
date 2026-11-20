@@ -1,0 +1,118 @@
+<!--
+  Scène de l'étape 1 : la mer, la barge et la fusée, sans moteur.
+
+  Repère du monde : z vers le haut, la mer en z = 0, le pont de la barge en z = 1 m.
+  Repère de la fusée : origine au milieu du réservoir, z le long de l'axe (pointe en haut).
+
+  Fusée (contrat) : 10 m × 1 m, 1 000 kg à vide, 4 jambes.
+    réservoir   700 kg   cylindre de z = -5 à +5
+    moteur      200 kg   bloc lourd au bas (centre de masse plus bas que le milieu)
+    4 jambes    4 × 25 kg (bras 20 kg + pied 5 kg)
+  Au repos sur le pont, l'origine de la fusée est à z ≈ 1 + 6,1 = 7,1 m.
+
+  Voir la scène :  uv run python -m mujoco.viewer --mjcf players/mathis/src/rocket_mathis/assets/scene.xml
+-->
+<mujoco model="rocket_landing">
+  <compiler angle="degree" autolimits="true"/>
+
+  <!-- Pas de 2 ms : contacts stables pour un corps de 1 t posé sur des pieds de 20 cm. -->
+  <option timestep="0.002" integrator="implicitfast" gravity="0 0 -9.81"/>
+
+  <statistic center="0 0 8" extent="30"/>
+
+  <visual>
+    <global offwidth="1280" offheight="720" azimuth="135" elevation="-15"/>
+    <map znear="0.05" zfar="3000"/>
+    <quality shadowsize="4096"/>
+    <headlight ambient="0.35 0.35 0.35" diffuse="0.5 0.5 0.5" specular="0.1 0.1 0.1"/>
+    <rgba haze="0.75 0.85 0.95 1"/>
+  </visual>
+
+  <default>
+    <!-- Géométries purement décoratives : ne touchent rien, ne pèsent rien. -->
+    <default class="deco">
+      <geom contype="0" conaffinity="0" mass="0" group="1"/>
+    </default>
+    <!-- Contacts de la fusée : un peu amortis pour simuler des jambes à amortisseurs. -->
+    <default class="fusee">
+      <geom friction="1 0.01 0.001" solref="0.02 1" solimp="0.95 0.99 0.001"/>
+    </default>
+  </default>
+
+  <asset>
+    <texture name="ciel" type="skybox" builtin="gradient" rgb1="0.45 0.65 0.9" rgb2="0.92 0.95 1" width="512" height="3072"/>
+    <texture name="mer" type="2d" builtin="flat" rgb1="0.08 0.28 0.45" rgb2="0.05 0.2 0.35" mark="random" random="0.02" markrgb="0.25 0.45 0.6" width="512" height="512"/>
+    <texture name="pont" type="2d" builtin="checker" rgb1="0.3 0.31 0.33" rgb2="0.27 0.28 0.3" width="256" height="256"/>
+    <material name="mer" texture="mer" texrepeat="40 40" reflectance="0.25" specular="0.6" shininess="0.8"/>
+    <material name="pont" texture="pont" texrepeat="6 6" specular="0.1"/>
+    <material name="coque" rgba="0.15 0.16 0.18 1"/>
+    <material name="blanc" rgba="0.93 0.94 0.95 1" specular="0.4" shininess="0.5"/>
+    <material name="noir" rgba="0.1 0.1 0.11 1"/>
+    <material name="metal" rgba="0.35 0.35 0.38 1" specular="0.8" shininess="0.8"/>
+    <material name="marquage" rgba="0.98 0.82 0.15 1"/>
+  </asset>
+
+  <worldbody>
+    <light name="soleil" directional="true" pos="0 0 100" dir="-0.4 0.3 -1" diffuse="0.8 0.8 0.75" castshadow="true"/>
+
+    <!-- La mer : toucher l'eau = échec (« à l'eau » ou « crash »). -->
+    <geom name="mer" type="plane" size="1000 1000 1" material="mer"/>
+
+    <camera name="large" pos="-45 -45 30" mode="targetbody" target="fusee"/>
+
+    <!--
+      La barge est un corps « mocap » : sa position est imposée par le code (phase 1 : elle dérive),
+      la physique ne la pousse pas. Pont de 15 × 15 m, surface en z = 1 m.
+    -->
+    <body name="barge" mocap="true" pos="0 0 0">
+      <geom name="pont" type="box" size="7.5 7.5 1" material="pont" friction="1 0.01 0.001"/>
+      <geom class="deco" type="box" size="7.6 7.6 0.9" pos="0 0 -0.15" material="coque"/>
+      <!-- Cible : un cercle et une croix au centre du pont. -->
+      <geom class="deco" type="cylinder" size="3 0.004" pos="0 0 1.002" material="marquage"/>
+      <geom class="deco" type="cylinder" size="2.75 0.004" pos="0 0 1.004" material="pont"/>
+      <geom class="deco" type="box" size="2.2 0.2 0.004" pos="0 0 1.006" euler="0 0 45" material="marquage"/>
+      <geom class="deco" type="box" size="2.2 0.2 0.004" pos="0 0 1.006" euler="0 0 -45" material="marquage"/>
+      <site name="cible" pos="0 0 1" size="0.1" rgba="1 0 0 0"/>
+      <camera name="pont" pos="11 -11 4" mode="targetbody" target="fusee"/>
+    </body>
+
+    <!-- La fusée : un seul corps rigide, libre dans l'espace (6 degrés de liberté). -->
+    <body name="fusee" pos="0 0 9" childclass="fusee">
+      <freejoint name="fusee"/>
+      <camera name="suivi" mode="trackcom" pos="0 -30 4" xyaxes="1 0 0 0 0.15 1"/>
+
+      <!-- Réservoir et moteur : ce sont eux qui donnent la masse et l'inertie. -->
+      <geom name="corps" type="cylinder" size="0.5 5" mass="700" material="blanc"/>
+      <geom name="moteur" type="cylinder" size="0.42 0.2" pos="0 0 -5.2" mass="200" material="metal"/>
+
+      <!-- Décor : pointe, bande noire, tuyère. -->
+      <geom class="deco" type="cylinder" size="0.505 0.6" pos="0 0 3.9" material="noir"/>
+      <geom class="deco" type="ellipsoid" size="0.5 0.5 0.35" pos="0 0 5" material="noir"/>
+      <geom class="deco" type="cylinder" size="0.3 0.15" pos="0 0 -5.5" material="metal"/>
+
+      <!-- 4 jambes : un bras et un pied. Seuls les pieds ont le droit de toucher le pont. -->
+      <geom name="jambe_1" type="capsule" fromto=" 0.35 0 -3.8  2.1 0 -5.9" size="0.08" mass="20" material="noir"/>
+      <geom name="jambe_2" type="capsule" fromto="0  0.35 -3.8  0  2.1 -5.9" size="0.08" mass="20" material="noir"/>
+      <geom name="jambe_3" type="capsule" fromto="-0.35 0 -3.8 -2.1 0 -5.9" size="0.08" mass="20" material="noir"/>
+      <geom name="jambe_4" type="capsule" fromto="0 -0.35 -3.8  0 -2.1 -5.9" size="0.08" mass="20" material="noir"/>
+      <geom name="pied_1" type="sphere" size="0.2" pos=" 2.1 0 -5.9" mass="5" material="metal"/>
+      <geom name="pied_2" type="sphere" size="0.2" pos="0  2.1 -5.9" mass="5" material="metal"/>
+      <geom name="pied_3" type="sphere" size="0.2" pos="-2.1 0 -5.9" mass="5" material="metal"/>
+      <geom name="pied_4" type="sphere" size="0.2" pos="0 -2.1 -5.9" mass="5" material="metal"/>
+
+      <!-- Points de référence pour la suite : où pousse le moteur (étape 2), où mesurer l'état. -->
+      <site name="moteur" pos="0 0 -5.65" size="0.05"/>
+      <site name="centrale" pos="0 0 0" size="0.05"/>
+    </body>
+  </worldbody>
+
+  <!--
+    Positions de départ toutes faites (menu « Key » du viewer) :
+      petite_chute : 2 m au-dessus du pont, pour vérifier que l'atterrissage est stable
+      descente     : départ type du contrat, 100 m plus haut, décalé et en train de tomber à 10 m/s
+  -->
+  <keyframe>
+    <key name="petite_chute" qpos="0 0 9 1 0 0 0" mpos="0 0 0" mquat="1 0 0 0"/>
+    <key name="descente" qpos="12 -8 107 0.9990 0.0349 0.0262 0" qvel="1 -0.5 -10 0 0 0" mpos="0 0 0" mquat="1 0 0 0"/>
+  </keyframe>
+</mujoco>

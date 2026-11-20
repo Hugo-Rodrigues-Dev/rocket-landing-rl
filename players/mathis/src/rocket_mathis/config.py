@@ -1,6 +1,16 @@
 """Paramètres de l'environnement. Valeurs par défaut = contrat (CONTRACT.md)."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+
+# Départ facile (difficulté 0) : bas, presque à la verticale de la cible, lent et droit.
+EASY_START = {
+    "altitude": (15.0, 25.0),
+    "offset_radius": 3.0,
+    "vertical_speed": (-4.0, -1.0),
+    "horizontal_speed": 0.5,
+    "max_tilt_deg": 2.0,
+    "max_angular_speed": 0.02,
+}
 
 
 @dataclass(frozen=True)
@@ -45,3 +55,14 @@ class EnvConfig:
     landed_reward: float = 100.0
     precision_bonus: float = 50.0  # en plus, au centre exact (0 au bord du pont)
     failure_reward: float = -100.0
+
+    def at_difficulty(self, difficulty: float) -> "EnvConfig":
+        """Départ interpolé entre EASY_START (0) et ce config (1). Seul le départ change."""
+        d = min(max(difficulty, 0.0), 1.0)
+
+        def mix(easy, full):
+            if isinstance(full, tuple):
+                return tuple(e + d * (f - e) for e, f in zip(easy, full, strict=True))
+            return easy + d * (full - easy)
+
+        return replace(self, **{k: mix(v, getattr(self, k)) for k, v in EASY_START.items()})

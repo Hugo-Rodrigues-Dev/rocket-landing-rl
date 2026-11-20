@@ -75,6 +75,11 @@ class RocketLandingEnv(MujocoEnv):
         rocket_geoms = np.flatnonzero((m.geom_bodyid == self._body) & (m.geom_contype > 0))
         self._hull = np.setdiff1d(rocket_geoms, self._feet)  # tout sauf les pieds
         self._barge_vel = np.zeros(2)
+        self._full_config = self.config
+
+    def set_difficulty(self, difficulty: float) -> None:
+        """Curriculum : 0 = départ facile, 1 = départ du contrat. Pris en compte au prochain reset."""
+        self.config = self._full_config.at_difficulty(difficulty)
 
     # ------------------------------------------------------------------ reset
 

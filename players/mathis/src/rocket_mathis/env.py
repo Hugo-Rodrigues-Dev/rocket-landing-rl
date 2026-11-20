@@ -15,8 +15,8 @@ Action (3 valeurs dans [-1, 1]) :
     [0]   poussée     -1 → 0, +1 → T_MAX
     [1:3] tuyère      ± GIMBAL_MAX autour des axes x et y de la fusée
 
-Récompense : R = γ·Φ(s') − Φ(s) + R_fin (voir EnvConfig). Φ guide vers le pont à chaque pas
-sans changer la meilleure politique ; R_fin vaut +100 (+50 au centre) si posée, −100 si échec.
+Récompense : R = γ·Φ(s') − Φ(s) + R_fin (voir EnvConfig). Φ guide vers le pont à chaque pas ;
+R_fin vaut +100 (+50 au centre) si posée, −100 si échec.
 """
 
 import mujoco
@@ -131,6 +131,8 @@ class RocketLandingEnv(MujocoEnv):
         gimbal = a[1:] * GIMBAL_MAX
 
         events = {"crash": False, "water": False}
+        if self._touched and self.config.engine_cutoff_on_touchdown:
+            thrust = 0.0  # moteur coupé depuis le contact, comme le Falcon 9
         self.engine.command(thrust, gimbal)
         self._update_barge_target(self.config.control_dt)
         for _ in range(self.frame_skip):
@@ -147,6 +149,8 @@ class RocketLandingEnv(MujocoEnv):
             if feet_on_deck.any() and not self._touched:
                 self._touched = True
                 self._impact = {"impact_speed": vz_before, "impact_tilt_deg": self._tilt_deg()}
+                if self.config.engine_cutoff_on_touchdown:
+                    self.engine.command(0.0, gimbal)
 
         outcome = self._outcome(events)
         terminated = outcome is not None
@@ -172,17 +176,22 @@ class RocketLandingEnv(MujocoEnv):
 
     def _potential(self) -> float:
         c = self.config
-        return -(
-            c.w_pos * np.linalg.norm(self._relative_position())
-            + c.w_vel * np.linalg.norm(self._relative_velocity())
-            + c.w_tilt * np.radians(self._tilt_deg())
-            + c.w_omega * np.linalg.norm(self.data.qvel[3:6])
+        return (
+            -(
+                c.w_pos * np.linalg.norm(self._relative_position())
+                + c.w_vel * np.linalg.norm(self._relative_velocity())
+                + c.w_tilt * np.radians(self._tilt_deg())
+                + c.w_omega * np.linalg.norm(self.data.qvel[3:6])
+            )
+            + c.w_feet * self._feet_on_deck().sum()
         )
 
     def _reward(self, outcome: str | None, terminated: bool) -> tuple[float, float]:
         """(guidage γ·Φ(s') − Φ(s), récompense de fin)."""
         c = self.config
-        phi_next = 0.0 if terminated else self._potential()
+        # Φ calculé aussi en fin d'épisode : finir loin ou de travers coûte, finir posé rapporte.
+        # (Avec Φ = 0 imposé à la fin, sortir de la zone loin du pont « encaissait » +|Φ| d'un coup.)
+        phi_next = self._potential()
         shaping = c.gamma * phi_next - self._phi
         self._phi = phi_next
         final = 0.0

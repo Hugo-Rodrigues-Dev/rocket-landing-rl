@@ -150,3 +150,15 @@ def test_landed_rocket_rides_the_moving_barge():
     mujoco.mj_forward(env.model, env.data)
     _, terminated, _, info = run(env, OFF)
     assert terminated and info["outcome"] == "landed"
+
+
+def test_engine_cuts_off_at_touchdown(env):
+    """Même à pleine poussée commandée, le moteur reste éteint après le premier contact."""
+    place(env, base_height=0.05, vz=-0.5)
+    full = np.array([1.0, 0.0, 0.0])
+    for _ in range(20):
+        _, _, terminated, _, info = env.step(full if env._touched else OFF)
+        if terminated:
+            break
+    assert info["outcome"] == "landed"
+    assert not env.data.xfrc_applied.any()

@@ -2,14 +2,15 @@
 
 from dataclasses import dataclass, replace
 
-# Départ facile (difficulté 0) : bas, presque à la verticale de la cible, lent et droit.
+# Départ facile (difficulté 0) : quelques mètres au-dessus de la cible, droit et lent,
+# pour que l'agent découvre l'atterrissage (et la coupure du moteur au contact) dès le début.
 EASY_START = {
-    "altitude": (15.0, 25.0),
-    "offset_radius": 3.0,
-    "vertical_speed": (-4.0, -1.0),
-    "horizontal_speed": 0.5,
-    "max_tilt_deg": 2.0,
-    "max_angular_speed": 0.02,
+    "altitude": (2.0, 6.0),
+    "offset_radius": 1.0,
+    "vertical_speed": (-1.5, -0.5),
+    "horizontal_speed": 0.2,
+    "max_tilt_deg": 1.0,
+    "max_angular_speed": 0.01,
 }
 
 
@@ -40,18 +41,20 @@ class EnvConfig:
     landed_speed: float = 0.2  # m/s
     landed_angular_speed: float = 0.1  # rad/s
     hard_landing_speed: float = 2.0  # m/s, vitesse verticale au premier contact
+    engine_cutoff_on_touchdown: bool = True  # le moteur s'éteint au premier contact d'un pied
     max_distance: float = 100.0  # m, horizontal
     max_altitude: float = 200.0  # m
     max_flight_tilt_deg: float = 60.0
 
-    # Récompense : R = γ·Φ(s') − Φ(s) + R_fin, avec Φ = 0 en fin d'épisode (Ng et al. 1999).
+    # Récompense : R = γ·Φ(s') − Φ(s) + R_fin (guidage par potentiel, Ng et al. 1999).
     # gamma doit être le même que celui de l'algorithme pour ne pas changer la politique optimale.
     gamma: float = 0.995
-    # Φ(s) = −(w_pos·‖Δp‖ + w_vel·‖Δv‖ + w_tilt·inclinaison + w_omega·‖ω‖)
+    # Φ(s) = −(w_pos·‖Δp‖ + w_vel·‖Δv‖ + w_tilt·inclinaison + w_omega·‖ω‖) + w_feet·(pieds posés)
     w_pos: float = 0.5  # par m
     w_vel: float = 1.0  # par m/s
     w_tilt: float = 10.0  # par rad
     w_omega: float = 5.0  # par rad/s
+    w_feet: float = 2.5  # par pied posé sur le pont
     landed_reward: float = 100.0
     precision_bonus: float = 50.0  # en plus, au centre exact (0 au bord du pont)
     failure_reward: float = -100.0

@@ -32,12 +32,12 @@ def test_failure_is_penalized(env):
     assert info["reward_terms"]["final"] == -100.0
 
 
-def test_shaping_telescopes_to_minus_initial_potential(env):
-    """Avec Φ = 0 en fin d'épisode, Σ γ^t · guidage = −Φ(s0) : le guidage ne favorise aucune trajectoire."""
+def test_shaping_telescopes(env):
+    """Σ γ^t · guidage = γ^T·Φ(s_T) − Φ(s0) : seul compte l'état de fin, pas le chemin."""
     gamma = env.config.gamma
     pd = PDController()
     obs, _ = env.reset(seed=4)
-    phi0 = env._phi
+    phi0 = env._phi  # Φ(s0)
     total, t, done = 0.0, 0, False
     while not done:
         obs, _, terminated, truncated, info = env.step(pd(obs))
@@ -45,7 +45,7 @@ def test_shaping_telescopes_to_minus_initial_potential(env):
         t += 1
         done = terminated or truncated
     assert terminated
-    assert total == pytest.approx(-phi0, rel=1e-9)
+    assert total == pytest.approx(gamma**t * env._phi - phi0, rel=1e-9)
 
 
 def test_pd_controller_beats_random():

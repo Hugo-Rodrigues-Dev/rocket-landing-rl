@@ -109,6 +109,7 @@ class CurriculumCallback(BaseCallback):
 def make_model(algo: str, env, gamma: float, seed: int, net: list[int]):
     policy_kwargs = {"net_arch": net}
     if algo == "ppo":
+        policy_kwargs["log_std_init"] = -0.5  # écart-type initial 0,6 au lieu de 1 : moins de chaos au début
         return PPO(
             "MlpPolicy",
             env,

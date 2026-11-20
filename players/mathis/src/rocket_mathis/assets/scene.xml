@@ -50,6 +50,7 @@
     <material name="noir" rgba="0.1 0.1 0.11 1"/>
     <material name="metal" rgba="0.35 0.35 0.38 1" specular="0.8" shininess="0.8"/>
     <material name="marquage" rgba="0.98 0.82 0.15 1"/>
+    <material name="flamme" rgba="1 0.5 0.1 0.85" emission="0.5"/>
   </asset>
 
   <worldbody>
@@ -88,7 +89,9 @@
       <!-- Décor : pointe, bande noire, tuyère. -->
       <geom class="deco" type="cylinder" size="0.505 0.6" pos="0 0 3.9" material="noir"/>
       <geom class="deco" type="ellipsoid" size="0.5 0.5 0.35" pos="0 0 5" material="noir"/>
-      <geom class="deco" type="cylinder" size="0.3 0.15" pos="0 0 -5.5" material="metal"/>
+      <!-- Tuyère et flamme : décor, leur pose est mise à jour par engine.py selon la commande. -->
+      <geom name="tuyere" class="deco" type="cylinder" size="0.3 0.15" pos="0 0 -5.55" material="metal"/>
+      <geom name="flamme" class="deco" type="capsule" size="0.25 0.5" pos="0 0 -6.45" material="flamme" rgba="1 0.55 0.12 0"/>
 
       <!-- 4 jambes : un bras et un pied. Seuls les pieds ont le droit de toucher le pont. -->
       <geom name="jambe_1" type="capsule" fromto=" 0.35 0 -3.8  2.1 0 -5.9" size="0.08" mass="20" material="noir"/>
@@ -101,7 +104,8 @@
       <geom name="pied_4" type="sphere" size="0.2" pos="0 -2.1 -5.9" mass="5" material="metal"/>
 
       <!-- Points de référence pour la suite : où pousse le moteur (étape 2), où mesurer l'état. -->
-      <site name="moteur" pos="0 0 -5.65" size="0.05"/>
+      <site name="moteur" pos="0 0 -5.4" size="0.05"/>
+      <camera name="tuyere" pos="0 -7 -6" xyaxes="1 0 0 0 0.1 1"/>
       <site name="centrale" pos="0 0 0" size="0.05"/>
     </body>
   </worldbody>

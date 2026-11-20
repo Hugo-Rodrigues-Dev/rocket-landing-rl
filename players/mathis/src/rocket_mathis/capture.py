@@ -15,6 +15,7 @@ import mujoco
 import numpy as np
 from PIL import Image
 
+from rocket_mathis.engine import GIMBAL_MAX, Engine
 from rocket_mathis.scene import load_model
 
 CAPTURES_DIR = Path(__file__).resolve().parents[2] / "docs" / "captures"
@@ -57,11 +58,37 @@ def capture_scene(step: str) -> list[Path]:
     return paths
 
 
+def capture_engine(step: str) -> list[Path]:
+    """Étape 2 : le moteur (vol stationnaire, tuyère orientée, fusée qui bascule)."""
+    model = load_model()
+    data = mujoco.MjData(model)
+    engine = Engine(model)
+    hover = model.body_subtreemass[model.body("fusee").id] * 9.81
+    shots = [
+        # (durée, poussée, tuyère, caméra, nom)
+        (1.0, hover, [0, 0], "pont", "vol-stationnaire"),
+        (0.1, hover, [0, GIMBAL_MAX], "tuyere", "tuyere-orientee"),
+        (1.5, hover, [0, GIMBAL_MAX], "suivi", "basculement"),
+    ]
+    paths = []
+    for seconds, thrust, gimbal, camera, name in shots:
+        mujoco.mj_resetData(model, data)
+        data.qpos[2] = 22.0  # 15 m au-dessus de la position posée
+        while data.time < seconds:
+            engine.apply(data, thrust, gimbal)
+            mujoco.mj_step(model, data)
+        paths.append(save(render(model, data, camera), step, name))
+    return paths
+
+
+STEPS = {"etape-1": capture_scene, "etape-2": capture_engine}
+
+
 def main():
     parser = argparse.ArgumentParser(description="Captures d'écran de documentation")
-    parser.add_argument("step", help="nom de l'étape, par exemple etape-1")
+    parser.add_argument("step", choices=STEPS, help="étape à capturer")
     args = parser.parse_args()
-    for path in capture_scene(args.step):
+    for path in STEPS[args.step](args.step):
         print(path.relative_to(CAPTURES_DIR.parents[3]))
 
 

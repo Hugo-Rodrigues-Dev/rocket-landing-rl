@@ -109,23 +109,31 @@ OUTCOME_COLORS = {"landed": (0.2, 0.85, 0.3, 1), "timeout": (1, 0.8, 0.2, 1)}
 FAILURE_COLOR = (0.95, 0.25, 0.2, 1)
 
 
+PANORAMA = {"lookat": (0, 0, 50), "distance": 230, "azimuth": 135, "elevation": -12}
+
+
+def trajectories(env, policy, seeds) -> list:
+    """Trajectoires du bas des pieds, colorées selon l'issue (vert : posée, rouge : échec)."""
+    trails = []
+    for seed in seeds:
+        obs, _ = env.reset(seed=seed)
+        points, done = [], False
+        while not done:
+            points.append(env.data.site_xpos[env._base].copy())
+            obs, _, terminated, truncated, info = env.step(policy(obs))
+            done = terminated or truncated
+        trails.append((points[::2], OUTCOME_COLORS.get(info["outcome"], FAILURE_COLOR)))
+    return trails
+
+
 def capture_env(step: str) -> list[Path]:
     """Étape 3 : l'environnement Gymnasium (départs aléatoires du contrat, fin d'épisode)."""
     from rocket_mathis.env import RocketLandingEnv  # import local : évite un cycle au chargement
 
     env = RocketLandingEnv()
-    hover = np.zeros(3)  # poussée = poids : la fusée garde sa vitesse de départ
-    trails = []
-    for seed in range(8):
-        env.reset(seed=seed)
-        points, done = [], False
-        while not done:
-            points.append(env.data.site_xpos[env._base].copy())
-            _, _, terminated, truncated, info = env.step(hover)
-            done = terminated or truncated
-        color = OUTCOME_COLORS.get(info["outcome"], FAILURE_COLOR)
-        trails.append((points[::2], color))
-    cam = free_camera(lookat=(0, 0, 50), distance=230, azimuth=135, elevation=-12)
+    # poussée = poids : la fusée garde sa vitesse de départ
+    trails = trajectories(env, lambda obs: np.zeros(3), range(8))
+    cam = free_camera(**PANORAMA)
     paths = [save(render(env.model, env.data, cam, trails=trails), step, "departs-aleatoires")]
 
     env.reset(seed=1)
@@ -138,7 +146,38 @@ def capture_env(step: str) -> list[Path]:
     return paths
 
 
-STEPS = {"etape-1": capture_scene, "etape-2": capture_engine, "etape-3": capture_env}
+def capture_pd(step: str) -> list[Path]:
+    """Étape 4 : le contrôleur PD de référence (mêmes 8 départs qu'à l'étape 3, puis un atterrissage)."""
+    from rocket_mathis.baseline_pd import PDController
+    from rocket_mathis.env import RocketLandingEnv
+
+    env = RocketLandingEnv()
+    pd = PDController()
+    trails = trajectories(env, pd, range(8))
+    image = render(env.model, env.data, free_camera(**PANORAMA), trails=trails)
+    paths = [save(image, step, "pd-trajectoires")]
+
+    obs, _ = env.reset(seed=2)
+    frames, done = {}, False
+    while not done:
+        obs, _, terminated, truncated, info = env.step(pd(obs))
+        done = terminated or truncated
+        height = obs[2] * 100
+        for name, h in (("pd-approche", 40.0), ("pd-arrondi", 8.0)):
+            if name not in frames and height < h:
+                frames[name] = render(env.model, env.data, "pont")
+    frames["pd-posee"] = render(env.model, env.data, "pont")
+    paths += [save(image, step, name) for name, image in frames.items()]
+    env.close()
+    return paths
+
+
+STEPS = {
+    "etape-1": capture_scene,
+    "etape-2": capture_engine,
+    "etape-3": capture_env,
+    "etape-4": capture_pd,
+}
 
 
 def main():

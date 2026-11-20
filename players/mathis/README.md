@@ -8,6 +8,13 @@ Environnement et agents de Mathis. Voir le [contrat](../../CONTRACT.md) pour le 
 |---|---|---|---|---|---|
 | 0 | | | | | |
 
+Référence à battre, le contrôleur PD écrit à la main (graines d'évaluation 10 000 à 10 099) :
+
+| Phase | Taux de réussite | Précision (médiane) | Vitesse au contact | Inclinaison au contact |
+|---|---|---|---|---|
+| 0 | 100 % | 0,38 m | −0,63 m/s | 1,5° |
+| 1 | 31 % ⚠️ voir notes de l'étape 4 | 4,2 m | −0,63 m/s | 2,4° |
+
 ## Avancement de l'environnement
 
 | Étape | Contenu | État |
@@ -15,7 +22,7 @@ Environnement et agents de Mathis. Voir le [contrat](../../CONTRACT.md) pour le 
 | 1 | Scène MuJoCo : mer, barge, fusée | ✅ |
 | 2 | Moteur : poussée et tuyère | ✅ |
 | 3 | Enveloppe Gymnasium : espaces, `reset`, `step`, fins d'épisode | ✅ |
-| 4 | Récompense, vérifiée avec un contrôleur PD de référence | |
+| 4 | Récompense, vérifiée avec un contrôleur PD de référence | ✅ |
 | 5 | Premier apprentissage (phase 0 facilitée, puis complète) | |
 
 ## Journal visuel
@@ -40,6 +47,12 @@ Captures rangées dans [`docs/captures/<etape>/`](docs/captures/), régénérée
 |---|---|
 | ![Départs aléatoires](docs/captures/etape-3/departs-aleatoires.png) | ![Chute libre](docs/captures/etape-3/chute-libre-crash.png) |
 
+### Étape 4 : récompense et contrôleur PD (20/11/2026)
+
+| Mêmes 8 départs, avec le PD : tous posés | Approche (40 m) | Arrondi (8 m) | Posée |
+|---|---|---|---|
+| ![Trajectoires PD](docs/captures/etape-4/pd-trajectoires.png) | ![Approche](docs/captures/etape-4/pd-approche.png) | ![Arrondi](docs/captures/etape-4/pd-arrondi.png) | ![Posée](docs/captures/etape-4/pd-posee.png) |
+
 ## Lancer
 
 ```bash
@@ -47,7 +60,7 @@ uv run python -m mujoco.viewer --mjcf players/mathis/src/rocket_mathis/assets/sc
 uv run pytest players/mathis
 # environnement : gymnasium.make("rocket_mathis/RocketLanding-v0", config=EnvConfig(phase=0))
 # entraînement :
-# évaluation (graines 10 000 à 10 099) :
+uv run python -m rocket_mathis.evaluate pd --phase 0   # évaluation du contrat (pd ou random)
 ```
 
 ## Notes
@@ -72,6 +85,14 @@ uv run pytest players/mathis
 - Observation de 21 valeurs, action de 3 valeurs dans [−1, 1] : détail en tête de `env.py`. Une action nulle donne poussée = poids.
 - Position mesurée au bas des pieds : altitude 0 = posée.
 - Fins d'épisode du contrat dans `info["outcome"]`, avec la vitesse et l'inclinaison au premier contact.
-- Récompense à 0 en attendant l'étape 4.
 - `check_env` passe, même graine = même épisode. Environ 1 600 pas/s sur un cœur, après avoir sorti du sous-pas le calcul de la direction de poussée et du décor.
+
+### Étape 4 : récompense et PD ([`baseline_pd.py`](src/rocket_mathis/baseline_pd.py), [`evaluate.py`](src/rocket_mathis/evaluate.py))
+
+- Récompense du MDP : guidage `γ·Φ(s') − Φ(s)` avec Φ = 0 en fin d'épisode, puis +100 (+50 au centre) ou −100. Poids et γ = 0,995 dans `EnvConfig`, détail dans `info["reward_terms"]`.
+- Vérifié en test : la somme actualisée du guidage vaut exactement −Φ(s0). Le guidage ne favorise donc aucune trajectoire.
+- PD : vitesse de descente proportionnelle à l'altitude, PD horizontal qui donne l'inclinaison voulue, PD d'attitude qui donne la tuyère. Il ne lit que l'observation.
+- Le PD réussit 100 % en phase 0, contre 0 % au hasard (retour moyen 244 contre −4).
+- Correction de l'environnement : « pied posé » = moins de 1 cm du pont, et non plus un contact strict. Sinon, une fusée posée droite sur 3 pieds, le quatrième à 2 mm, n'était jamais déclarée posée.
+- ⚠️ Phase 1 : une barge `mocap` se téléporte, donc le frottement n'entraîne pas la fusée posée et le pont glisse sous elle. Il faut donner une vraie vitesse à la barge avant de travailler la phase 1.
 

@@ -31,3 +31,15 @@ class EnvConfig:
     max_distance: float = 100.0  # m, horizontal
     max_altitude: float = 200.0  # m
     max_flight_tilt_deg: float = 60.0
+
+    # Récompense : R = γ·Φ(s') − Φ(s) + R_fin, avec Φ = 0 en fin d'épisode (Ng et al. 1999).
+    # gamma doit être le même que celui de l'algorithme pour ne pas changer la politique optimale.
+    gamma: float = 0.995
+    # Φ(s) = −(w_pos·‖Δp‖ + w_vel·‖Δv‖ + w_tilt·inclinaison + w_omega·‖ω‖)
+    w_pos: float = 0.5  # par m
+    w_vel: float = 1.0  # par m/s
+    w_tilt: float = 10.0  # par rad
+    w_omega: float = 5.0  # par rad/s
+    landed_reward: float = 100.0
+    precision_bonus: float = 50.0  # en plus, au centre exact (0 au bord du pont)
+    failure_reward: float = -100.0

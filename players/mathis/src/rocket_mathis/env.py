@@ -15,7 +15,8 @@ Action (3 valeurs dans [-1, 1]) :
     [0]   poussée     -1 → 0, +1 → T_MAX
     [1:3] tuyère      ± GIMBAL_MAX autour des axes x et y de la fusée
 
-Récompense : 0 pour l'instant, elle arrive à l'étape 4.
+Récompense : R = γ·Φ(s') − Φ(s) + R_fin (voir EnvConfig). Φ guide vers le pont à chaque pas
+sans changer la meilleure politique ; R_fin vaut +100 (+50 au centre) si posée, −100 si échec.
 """
 
 import mujoco
@@ -65,7 +66,8 @@ class RocketLandingEnv(MujocoEnv):
         self.engine = Engine(m)
         self._body = m.body("fusee").id
         self._base = m.site("base").id
-        self._barge = m.body_mocapid[m.body("barge").id]
+        self._barge_body = m.body("barge").id
+        self._barge = m.body_mocapid[self._barge_body]
         self._deck = m.geom("pont").id
         self._sea = m.geom("mer").id
         self._feet = np.array([m.geom(name).id for name in FEET])
@@ -111,6 +113,7 @@ class RocketLandingEnv(MujocoEnv):
         self._impact = {}
         self.engine.apply(self.data, 0.0, np.zeros(2))  # éteint, flamme cachée
         mujoco.mj_forward(self.model, self.data)
+        self._phi = self._potential()
         return self._get_obs()
 
     # ------------------------------------------------------------------ step
@@ -145,22 +148,49 @@ class RocketLandingEnv(MujocoEnv):
             outcome = "timeout"
 
         obs = self._get_obs()
-        reward = 0.0  # étape 4
+        shaping, final = self._reward(outcome, terminated)
+        distance = float(np.linalg.norm(self._relative_position()[:2]))
         info = {
             "outcome": outcome or "flying",
             "is_success": outcome == "landed",
-            "distance_to_center": float(np.linalg.norm(self._relative_position()[:2])),
+            "distance_to_center": distance,
+            "reward_terms": {"shaping": shaping, "final": final},
             **self._impact,
         }
         if self.render_mode == "human":
             self.render()
-        return obs, reward, terminated, truncated, info
+        return obs, shaping + final, terminated, truncated, info
+
+    # ------------------------------------------------------------------ récompense
+
+    def _potential(self) -> float:
+        c = self.config
+        return -(
+            c.w_pos * np.linalg.norm(self._relative_position())
+            + c.w_vel * np.linalg.norm(self._relative_velocity())
+            + c.w_tilt * np.radians(self._tilt_deg())
+            + c.w_omega * np.linalg.norm(self.data.qvel[3:6])
+        )
+
+    def _reward(self, outcome: str | None, terminated: bool) -> tuple[float, float]:
+        """(guidage γ·Φ(s') − Φ(s), récompense de fin)."""
+        c = self.config
+        phi_next = 0.0 if terminated else self._potential()
+        shaping = c.gamma * phi_next - self._phi
+        self._phi = phi_next
+        final = 0.0
+        if outcome == "landed":
+            distance = np.linalg.norm(self._relative_position()[:2])
+            final = c.landed_reward + c.precision_bonus * max(0.0, 1.0 - distance / DECK_HALF)
+        elif outcome in FAILURES:
+            final = c.failure_reward
+        return float(shaping), float(final)
 
     # ------------------------------------------------------------------ état
 
     def _get_obs(self) -> np.ndarray:
         rot = self.data.xmat[self._body].reshape(3, 3)
-        feet_on_deck, _, _ = self._contacts()
+        feet_on_deck = self._feet_on_deck()
         obs = np.concatenate(
             [
                 self._relative_position(),
@@ -192,6 +222,18 @@ class RocketLandingEnv(MujocoEnv):
     def _tilt_deg(self) -> float:
         return float(np.degrees(np.arccos(np.clip(self.data.xmat[self._body][8], -1.0, 1.0))))
 
+    def _feet_on_deck(self) -> np.ndarray:
+        """Capteur de pied : le bas du pied est à moins de 1 cm du pont, au-dessus du pont.
+
+        Un test de contact strict ne suffit pas : posée bien droite, une fusée à 4 pieds peut
+        reposer sur 3 pieds avec le quatrième à 2 mm, et ne serait jamais déclarée « posée ».
+        """
+        rot = self.data.xmat[self._barge_body].reshape(3, 3)
+        rel = (self.data.geom_xpos[self._feet] - self.data.xpos[self._barge_body]) @ rot  # repère barge
+        bottom = rel[:, 2] - self.model.geom_size[self._feet, 0] - DECK_TOP_Z
+        over_deck = np.abs(rel[:, :2]).max(axis=1) <= DECK_HALF
+        return over_deck & (bottom < 0.01)
+
     def _contacts(self):
         """(pieds sur le pont [4], crash, à l'eau) d'après les contacts du pas courant."""
         feet_on_deck = np.zeros(4, dtype=bool)
@@ -217,9 +259,8 @@ class RocketLandingEnv(MujocoEnv):
             return "water"
         if self._touched and self._impact["impact_speed"] < -c.hard_landing_speed:
             return "hard_landing"
-        feet_on_deck, _, _ = self._contacts()
         if (
-            feet_on_deck.all()
+            self._feet_on_deck().all()
             and np.linalg.norm(self._relative_velocity()) < c.landed_speed
             and np.linalg.norm(self.data.qvel[3:6]) < c.landed_angular_speed
         ):

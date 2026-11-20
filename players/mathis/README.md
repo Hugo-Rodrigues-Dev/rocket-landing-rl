@@ -18,6 +18,16 @@ Environnement et agents de Mathis. Voir le [contrat](../../CONTRACT.md) pour le 
 | 4 | Récompense, vérifiée avec un contrôleur PD de référence | |
 | 5 | Premier apprentissage (phase 0 facilitée, puis complète) | |
 
+## Journal visuel
+
+Captures prises au fil des étapes, rangées dans [`docs/captures/<etape>/`](docs/captures/). Pour régénérer celles d'une étape : `uv run python -m rocket_mathis.capture etape-1`.
+
+### Étape 1 : la scène (20/11/2026)
+
+| Fusée posée sur la barge | Vue d'ensemble | Pendant la descente |
+|---|---|---|
+| ![Fusée posée](docs/captures/etape-1/fusee-posee.png) | ![Vue d'ensemble](docs/captures/etape-1/vue-ensemble.png) | ![Descente](docs/captures/etape-1/descente.png) |
+
 ## Lancer
 
 ```bash

@@ -3,6 +3,7 @@
 import mujoco
 import numpy as np
 import pytest
+
 from rocket_mathis.scene import DECK_TOP_Z, FEET, load_model
 
 REST_Z = DECK_TOP_Z + 6.1  # origine de la fusée posée : pont + distance origine → bas des pieds

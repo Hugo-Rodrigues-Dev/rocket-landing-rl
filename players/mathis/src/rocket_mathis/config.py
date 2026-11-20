@@ -12,6 +12,15 @@ EASY_START = {
     "max_tilt_deg": 1.0,
     "max_angular_speed": 0.01,
 }
+# Premier départ facile essayé (v1) : trop haut, l'agent ne découvrait jamais l'atterrissage.
+EASY_START_V1 = {
+    "altitude": (15.0, 25.0),
+    "offset_radius": 3.0,
+    "vertical_speed": (-4.0, -1.0),
+    "horizontal_speed": 0.5,
+    "max_tilt_deg": 2.0,
+    "max_angular_speed": 0.02,
+}
 
 
 @dataclass(frozen=True)
@@ -55,9 +64,11 @@ class EnvConfig:
     w_tilt: float = 10.0  # par rad
     w_omega: float = 5.0  # par rad/s
     w_feet: float = 2.5  # par pied posé sur le pont
+    shaping_zero_at_end: bool = False  # v1-v2 : Φ = 0 imposé en fin d'épisode (exploitable)
     landed_reward: float = 100.0
     precision_bonus: float = 50.0  # en plus, au centre exact (0 au bord du pont)
     failure_reward: float = -100.0
+    easy_start_v1: bool = False  # v1 : ancien départ facile (EASY_START_V1)
 
     def at_difficulty(self, difficulty: float) -> "EnvConfig":
         """Départ interpolé entre EASY_START (0) et ce config (1). Seul le départ change."""
@@ -68,4 +79,23 @@ class EnvConfig:
                 return tuple(e + d * (f - e) for e, f in zip(easy, full, strict=True))
             return easy + d * (full - easy)
 
-        return replace(self, **{k: mix(v, getattr(self, k)) for k, v in EASY_START.items()})
+        easy_start = EASY_START_V1 if self.easy_start_v1 else EASY_START
+        return replace(self, **{k: mix(v, getattr(self, k)) for k, v in easy_start.items()})
+
+
+# Historique des versions de l'environnement, pour reproduire et filmer les échecs d'apprentissage.
+VARIANTS = {
+    "v1": {
+        "easy_start_v1": True,
+        "shaping_zero_at_end": True,
+        "w_feet": 0.0,
+        "engine_cutoff_on_touchdown": False,
+    },
+    "v2": {"shaping_zero_at_end": True, "engine_cutoff_on_touchdown": False},
+    "v3": {"engine_cutoff_on_touchdown": False},
+    "v4": {},  # version actuelle
+}
+
+
+def variant_config(variant: str = "v4", **overrides) -> EnvConfig:
+    return EnvConfig(**{**VARIANTS[variant], **overrides})

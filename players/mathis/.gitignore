@@ -1,0 +1,2 @@
+# Les GIF du journal sont versionnés, malgré le .gitignore racine.
+!docs/captures/**/*.gif

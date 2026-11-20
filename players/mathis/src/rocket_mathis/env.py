@@ -191,7 +191,7 @@ class RocketLandingEnv(MujocoEnv):
         c = self.config
         # Φ calculé aussi en fin d'épisode : finir loin ou de travers coûte, finir posé rapporte.
         # (Avec Φ = 0 imposé à la fin, sortir de la zone loin du pont « encaissait » +|Φ| d'un coup.)
-        phi_next = self._potential()
+        phi_next = 0.0 if (terminated and c.shaping_zero_at_end) else self._potential()
         shaping = c.gamma * phi_next - self._phi
         self._phi = phi_next
         final = 0.0

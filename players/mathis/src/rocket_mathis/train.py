@@ -30,7 +30,7 @@ from stable_baselines3.common.logger import HumanOutputFormat, KVWriter, Logger
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 
-from rocket_mathis.config import EnvConfig
+from rocket_mathis.config import VARIANTS, variant_config
 from rocket_mathis.env import RocketLandingEnv
 from rocket_mathis.evaluate import evaluate
 
@@ -145,6 +145,7 @@ def main():
     parser = argparse.ArgumentParser(description="Entraînement SB3 de la fusée")
     parser.add_argument("--algo", choices=["ppo", "sac"], default="ppo")
     parser.add_argument("--phase", type=int, default=0)
+    parser.add_argument("--variant", choices=list(VARIANTS), default="v4", help="version de l'environnement")
     parser.add_argument("--steps", type=int, default=2_000_000)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--n-envs", type=int, default=None, help="par défaut : 8 pour PPO, 1 pour SAC")
@@ -155,7 +156,7 @@ def main():
     args = parser.parse_args()
 
     torch.set_num_threads(1)  # petits réseaux : 1 thread est 2× plus rapide que la valeur par défaut
-    config = EnvConfig(phase=args.phase)
+    config = variant_config(args.variant, phase=args.phase)
     n_envs = args.n_envs or (8 if args.algo == "ppo" else 1)
     name = args.name or f"mathis-phase{args.phase}-{args.algo}-s{args.seed}-{time.strftime('%m%d-%H%M')}"
     run_dir = RUNS_DIR / name

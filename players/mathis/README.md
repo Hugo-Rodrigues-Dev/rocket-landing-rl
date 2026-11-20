@@ -23,7 +23,7 @@ Référence à battre, le contrôleur PD écrit à la main (graines d'évaluatio
 | 2 | Moteur : poussée et tuyère | ✅ |
 | 3 | Enveloppe Gymnasium : espaces, `reset`, `step`, fins d'épisode | ✅ |
 | 4 | Récompense, vérifiée avec un contrôleur PD de référence | ✅ |
-| 5 | Premier apprentissage (phase 0 facilitée, puis complète) | |
+| 5 | Premier apprentissage (phase 0 facilitée, puis complète) | en cours : v1 à v4 échouent, voir le journal |
 
 ## Journal visuel
 
@@ -59,14 +59,44 @@ Captures rangées dans [`docs/captures/<etape>/`](docs/captures/), régénérée
 |---|---|
 | ![Barge mobile](docs/captures/phase-1/pd-barge-mobile.png) | ![Posée](docs/captures/phase-1/pd-posee-barge-mobile.png) |
 
+### Étape 5 : ce que les agents apprennent quand l'environnement est mal conçu (20/11/2026)
+
+Chaque version de l'environnement se reproduit avec `--variant` (voir `VARIANTS` dans [`config.py`](src/rocket_mathis/config.py)). Les mesures portent sur 20 épisodes au niveau facile, celui de l'entraînement.
+
+| Version | Défaut | Ce que l'agent a appris | Issues |
+|---|---|---|---|
+| v1 | départ « facile » à 15–25 m, pas de coupure du moteur | planer vers 15 m sans toucher le pont | PPO : 75 % temps écoulé, 25 % hors zone. SAC : 85 / 15 % |
+| v2 | Φ = 0 forcé en fin d'épisode | partir loin à basse altitude : sortir de la zone « encaisse » +\|Φ\| | 65 % hors zone, 35 % temps écoulé |
+| v3 | pas de coupure du moteur : posée, la fusée glisse à l'eau | fuir le pont, puis basculer | 95 % hors zone |
+| v4 | rester en l'air ne coûte rien, curriculum par paliers | PPO : 74 % posées au niveau 0, puis effondrement à 0 % au palier 0,1. SAC : se pose parfois, plane souvent | PPO : 0 %. SAC : 20–25 % posées |
+
+| v1 : PPO plane | v1 : SAC plane | v2 : PPO part au loin |
+|---|---|---|
+| ![v1 PPO](docs/captures/etape-5/v1-ppo.gif) | ![v1 SAC](docs/captures/etape-5/v1-sac.gif) | ![v2 PPO](docs/captures/etape-5/v2-ppo.gif) |
+
+| v3 : PPO fuit et bascule | v4 : PPO après l'effondrement | v4 : SAC se pose, puis plane |
+|---|---|---|
+| ![v3 PPO](docs/captures/etape-5/v3-ppo.gif) | ![v4 PPO](docs/captures/etape-5/v4-ppo-effondrement.gif) | ![v4 SAC](docs/captures/etape-5/v4-sac.gif) |
+
+| Référence : le PD se pose depuis un départ du contrat |
+|---|
+| ![PD](docs/captures/etape-5/pd-reference.gif) |
+
+À retenir :
+- Tant qu'un essai raté coûte −100 et qu'attendre ne coûte rien, l'agent apprend à ne rien tenter : planer ou fuir.
+- Un guidage mal borné en fin d'épisode (v2) devient une source de points à exploiter.
+- L'agent doit pouvoir **découvrir** le succès par hasard au début, sinon il n'apprend jamais à se poser (v1, v3).
+- Un curriculum par paliers peut faire **oublier** ce qui était acquis (v4, PPO).
+
 ## Lancer
 
 ```bash
 uv run python -m mujoco.viewer --mjcf players/mathis/src/rocket_mathis/assets/scene.xml   # menu Key : petite_chute, descente
 uv run pytest players/mathis
 # environnement : gymnasium.make("rocket_mathis/RocketLanding-v0", config=EnvConfig(phase=0))
-# entraînement :
+uv run python -m rocket_mathis.train --algo ppo --variant v4 --steps 3000000   # entraînement (ppo ou sac)
 uv run python -m rocket_mathis.evaluate pd --phase 0   # évaluation du contrat (pd ou random)
+uv run python -m rocket_mathis.video <modèle.zip> --variant v4 --difficulty 0 --out <fichier.gif>   # GIF
 ```
 
 ## Notes

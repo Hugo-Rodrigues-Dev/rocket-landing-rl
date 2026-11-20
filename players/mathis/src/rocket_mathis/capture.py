@@ -172,11 +172,39 @@ def capture_pd(step: str) -> list[Path]:
     return paths
 
 
+def capture_barge(step: str) -> list[Path]:
+    """Correctif phase 1 : le PD suit la barge qui dérive (trace bleue) et se pose dessus."""
+    from rocket_mathis.baseline_pd import PDController
+    from rocket_mathis.config import EnvConfig
+    from rocket_mathis.env import RocketLandingEnv
+
+    env = RocketLandingEnv(EnvConfig(phase=1))
+    pd = PDController()
+    obs, _ = env.reset(seed=10_007)
+    rocket, barge, done = [], [], False
+    while not done:
+        rocket.append(env.data.site_xpos[env._base].copy())
+        barge.append(env._target() + [0, 0, 0.3])
+        obs, _, terminated, truncated, info = env.step(pd(obs))
+        done = terminated or truncated
+    trails = [
+        (rocket[::2], OUTCOME_COLORS.get(info["outcome"], FAILURE_COLOR)),
+        (barge[::4], (0.3, 0.6, 1, 1)),
+    ]
+    lookat = (barge[-1][0], barge[-1][1], 35)
+    cam = free_camera(lookat=lookat, distance=150, azimuth=135, elevation=-15)
+    paths = [save(render(env.model, env.data, cam, trails=trails), step, "pd-barge-mobile")]
+    paths.append(save(render(env.model, env.data, "pont"), step, "pd-posee-barge-mobile"))
+    env.close()
+    return paths
+
+
 STEPS = {
     "etape-1": capture_scene,
     "etape-2": capture_engine,
     "etape-3": capture_env,
     "etape-4": capture_pd,
+    "phase-1": capture_barge,
 }
 
 

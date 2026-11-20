@@ -19,10 +19,12 @@ class EnvConfig:
     max_tilt_deg: float = 10.0
     max_angular_speed: float = 0.1  # rad/s, en tangage et en lacet (pas de roulis)
 
-    # Barge mobile (phase 1) : vitesse d'Ornstein-Uhlenbeck
+    # Barge mobile (phase 1) : vitesse visée d'Ornstein-Uhlenbeck (tirée à chaque décision),
+    # que la barge suit avec une accélération limitée, comme un vrai navire.
     barge_theta: float = 0.5  # 1/s, rappel vers 0
     barge_sigma: float = 1.0  # m/s/√s
     barge_max_speed: float = 3.0  # m/s
+    barge_max_accel: float = 0.5  # m/s²
 
     # Fins d'épisode
     landed_speed: float = 0.2  # m/s

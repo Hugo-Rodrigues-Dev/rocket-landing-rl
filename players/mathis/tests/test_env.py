@@ -107,22 +107,46 @@ def test_hovering_until_timeout(env):
     assert env.data.time == pytest.approx(30.0, abs=0.06)
 
 
+def barge_position(env):
+    return env.data.xpos[env._barge_body].copy()
+
+
 def test_barge_moves_in_phase_1():
     env = RocketLandingEnv(EnvConfig(phase=1))
     env.reset(seed=3)
-    start = env.data.mocap_pos[env._barge].copy()
-    speeds = []
+    start = barge_position(env)
+    velocities = []
     for _ in range(100):
         obs, *_ = env.step(HOVER)
-        speeds.append(np.linalg.norm(obs[15:17] * 3))
-    assert np.linalg.norm(env.data.mocap_pos[env._barge] - start) > 0.5
-    assert max(speeds) <= 3.0 + 1e-9
-    assert env.data.mocap_pos[env._barge][2] == 0.0
+        velocities.append(obs[15:17] * 3)
+    velocities = np.array(velocities)
+    accelerations = np.linalg.norm(np.diff(velocities, axis=0), axis=1) / env.config.control_dt
+    assert np.linalg.norm(barge_position(env) - start) > 0.5
+    assert np.linalg.norm(velocities, axis=1).max() <= 3.0 + 1e-6
+    assert accelerations.max() <= env.config.barge_max_accel + 1e-3  # pas d'à-coups
+    assert barge_position(env)[2] == 0.0
 
 
 def test_barge_still_in_phase_0(env):
     env.reset(seed=3)
     for _ in range(20):
         obs, *_ = env.step(HOVER)
-    assert not env.data.mocap_pos[env._barge].any()
+    assert not barge_position(env).any()
     assert not obs[15:17].any()
+
+
+def test_landed_rocket_rides_the_moving_barge():
+    """La barge a une vraie vitesse : le frottement entraîne la fusée posée, qui reste « posée »."""
+    env = RocketLandingEnv(EnvConfig(phase=1))
+    env.reset(seed=0)
+    env._barge_vel = np.array([2.0, -1.0])
+    qpos = env.data.qpos.copy()
+    qpos[:3] = [0.0, 0.0, DECK_TOP_Z + 0.02 + BASE_DEPTH]
+    qpos[3:7] = [1, 0, 0, 0]
+    qvel = np.zeros(env.model.nv)
+    qvel[:2] = env._barge_vel  # déjà à la vitesse de la barge, comme après l'approche
+    qvel[env._barge_dofs] = env._barge_vel
+    env.set_state(qpos, qvel)
+    mujoco.mj_forward(env.model, env.data)
+    _, terminated, _, info = run(env, OFF)
+    assert terminated and info["outcome"] == "landed"

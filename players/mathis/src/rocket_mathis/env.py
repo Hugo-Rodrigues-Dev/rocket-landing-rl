@@ -67,7 +67,8 @@ class RocketLandingEnv(MujocoEnv):
         self._body = m.body("fusee").id
         self._base = m.site("base").id
         self._barge_body = m.body("barge").id
-        self._barge = m.body_mocapid[self._barge_body]
+        first = m.jnt_dofadr[m.joint("barge_x").id]  # barge_x puis barge_y
+        self._barge_dofs = slice(first, first + 2)
         self._deck = m.geom("pont").id
         self._sea = m.geom("mer").id
         self._feet = np.array([m.geom(name).id for name in FEET])
@@ -101,13 +102,14 @@ class RocketLandingEnv(MujocoEnv):
         qvel[:2] = _uniform_disk(rng, c.horizontal_speed)
         qvel[2] = rng.uniform(*c.vertical_speed)
         qvel[3:5] = rng.uniform(-c.max_angular_speed, c.max_angular_speed, size=2)
-        self.set_state(qpos, qvel)
 
-        self.data.mocap_pos[self._barge] = 0.0
-        self._barge_vel = np.zeros(2)
+        self._barge_vel = np.zeros(2)  # barge au centre (qpos des glissières à 0)
         if c.phase >= 1:
             std = c.barge_sigma / np.sqrt(2 * c.barge_theta)  # loi stationnaire du processus
             self._barge_vel = _clip_norm(rng.normal(0, std, size=2), c.barge_max_speed)
+        self._barge_target = self._barge_vel.copy()
+        qvel[self._barge_dofs] = self._barge_vel
+        self.set_state(qpos, qvel)
 
         self._touched = False
         self._impact = {}
@@ -125,9 +127,9 @@ class RocketLandingEnv(MujocoEnv):
 
         events = {"crash": False, "water": False}
         self.engine.command(thrust, gimbal)
+        self._update_barge_target(self.config.control_dt)
         for _ in range(self.frame_skip):
-            if self.config.phase >= 1:
-                self._move_barge(self.model.opt.timestep)
+            self._move_barge(self.model.opt.timestep)
             self.engine.push(self.data)
             vz_before = self.data.qvel[2] if not self._touched else 0.0
             mujoco.mj_step(self.model, self.data)
@@ -206,7 +208,7 @@ class RocketLandingEnv(MujocoEnv):
 
     def _target(self) -> np.ndarray:
         """Centre de la surface du pont, dans le monde."""
-        return self.data.mocap_pos[self._barge] + np.array([0.0, 0.0, DECK_TOP_Z])
+        return self.data.xpos[self._barge_body] + np.array([0.0, 0.0, DECK_TOP_Z])
 
     def _relative_position(self) -> np.ndarray:
         return self.data.site_xpos[self._base] - self._target()
@@ -217,7 +219,7 @@ class RocketLandingEnv(MujocoEnv):
         omega_world = rot @ self.data.qvel[3:6]
         lever = self.data.site_xpos[self._base] - self.data.xpos[self._body]
         v_base = self.data.qvel[:3] + np.cross(omega_world, lever)
-        return v_base - np.append(self._barge_vel, 0.0)
+        return v_base - np.append(self.data.qvel[self._barge_dofs], 0.0)
 
     def _tilt_deg(self) -> float:
         return float(np.degrees(np.arccos(np.clip(self.data.xmat[self._body][8], -1.0, 1.0))))
@@ -275,12 +277,26 @@ class RocketLandingEnv(MujocoEnv):
 
     # ------------------------------------------------------------------ barge
 
-    def _move_barge(self, dt: float):
+    def _update_barge_target(self, dt: float):
+        """Vitesse visée de la barge : processus d'Ornstein-Uhlenbeck, tiré une fois par décision."""
         c = self.config
-        noise = self.np_random.normal(size=2)
-        v = self._barge_vel - c.barge_theta * self._barge_vel * dt + c.barge_sigma * np.sqrt(dt) * noise
-        self._barge_vel = _clip_norm(v, c.barge_max_speed)
-        self.data.mocap_pos[self._barge, :2] += self._barge_vel * dt
+        if c.phase >= 1:
+            noise = self.np_random.normal(size=2)
+            v = (
+                self._barge_target
+                - c.barge_theta * self._barge_target * dt
+                + c.barge_sigma * np.sqrt(dt) * noise
+            )
+            self._barge_target = _clip_norm(v, c.barge_max_speed)
+
+    def _move_barge(self, dt: float):
+        """La barge rejoint la vitesse visée avec une accélération limitée.
+
+        Vitesse réimposée à chaque sous-pas : la fusée qui se pose ne doit pas pousser la barge.
+        """
+        step = _clip_norm(self._barge_target - self._barge_vel, self.config.barge_max_accel * dt)
+        self._barge_vel = self._barge_vel + step
+        self.data.qvel[self._barge_dofs] = self._barge_vel
 
 
 def _uniform_disk(rng: np.random.Generator, radius: float) -> np.ndarray:

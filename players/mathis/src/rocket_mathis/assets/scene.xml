@@ -61,22 +61,6 @@
 
     <camera name="large" pos="-45 -45 30" mode="targetbody" target="fusee"/>
 
-    <!--
-      La barge est un corps « mocap » : sa position est imposée par le code (phase 1 : elle dérive),
-      la physique ne la pousse pas. Pont de 15 × 15 m, surface en z = 1 m.
-    -->
-    <body name="barge" mocap="true" pos="0 0 0">
-      <geom name="pont" type="box" size="7.5 7.5 1" material="pont" friction="1 0.01 0.001"/>
-      <geom class="deco" type="box" size="7.6 7.6 0.9" pos="0 0 -0.15" material="coque"/>
-      <!-- Cible : un cercle et une croix au centre du pont. -->
-      <geom class="deco" type="cylinder" size="3 0.004" pos="0 0 1.002" material="marquage"/>
-      <geom class="deco" type="cylinder" size="2.75 0.004" pos="0 0 1.004" material="pont"/>
-      <geom class="deco" type="box" size="2.2 0.2 0.004" pos="0 0 1.006" euler="0 0 45" material="marquage"/>
-      <geom class="deco" type="box" size="2.2 0.2 0.004" pos="0 0 1.006" euler="0 0 -45" material="marquage"/>
-      <site name="cible" pos="0 0 1" size="0.1" rgba="1 0 0 0"/>
-      <camera name="pont" pos="11 -11 4" mode="targetbody" target="fusee"/>
-    </body>
-
     <!-- La fusée : un seul corps rigide, libre dans l'espace (6 degrés de liberté). -->
     <body name="fusee" pos="0 0 9" childclass="fusee">
       <freejoint name="fusee"/>
@@ -110,7 +94,32 @@
       <!-- Point de référence de la position : au niveau du bas des pieds (altitude 0 = posée). -->
       <site name="base" pos="0 0 -6.1" size="0.05"/>
     </body>
+
+    <!--
+      La barge : un corps très lourd qui glisse en x et en y. Sa vitesse est imposée par le code à
+      chaque pas (phase 1 : elle dérive). C'est une vraie vitesse, donc le frottement entraîne la
+      fusée posée. Elle vient après la fusée pour que qpos[0:7] et qvel[0:6] restent ceux de la fusée.
+      Pont de 15 × 15 m, surface en z = 1 m.
+    -->
+    <body name="barge" pos="0 0 0">
+      <joint name="barge_x" type="slide" axis="1 0 0"/>
+      <joint name="barge_y" type="slide" axis="0 1 0"/>
+      <geom name="pont" type="box" size="7.5 7.5 1" mass="1000000" material="pont" friction="1 0.01 0.001"/>
+      <geom class="deco" type="box" size="7.6 7.6 0.9" pos="0 0 -0.15" material="coque"/>
+      <!-- Cible : un cercle et une croix au centre du pont. -->
+      <geom class="deco" type="cylinder" size="3 0.004" pos="0 0 1.002" material="marquage"/>
+      <geom class="deco" type="cylinder" size="2.75 0.004" pos="0 0 1.004" material="pont"/>
+      <geom class="deco" type="box" size="2.2 0.2 0.004" pos="0 0 1.006" euler="0 0 45" material="marquage"/>
+      <geom class="deco" type="box" size="2.2 0.2 0.004" pos="0 0 1.006" euler="0 0 -45" material="marquage"/>
+      <site name="cible" pos="0 0 1" size="0.1" rgba="1 0 0 0"/>
+      <camera name="pont" pos="11 -11 4" mode="targetbody" target="fusee"/>
+    </body>
   </worldbody>
+
+  <!-- La coque flotte : pas de contact (ni de frottement) entre la barge et la mer. -->
+  <contact>
+    <exclude body1="world" body2="barge"/>
+  </contact>
 
   <!--
     Positions de départ toutes faites (menu « Key » du viewer) :
@@ -118,7 +127,7 @@
       descente     : départ type du contrat, 100 m plus haut, décalé et en train de tomber à 10 m/s
   -->
   <keyframe>
-    <key name="petite_chute" qpos="0 0 9 1 0 0 0" mpos="0 0 0" mquat="1 0 0 0"/>
-    <key name="descente" qpos="12 -8 107 0.9990 0.0349 0.0262 0" qvel="1 -0.5 -10 0 0 0" mpos="0 0 0" mquat="1 0 0 0"/>
+    <key name="petite_chute" qpos="0 0 9 1 0 0 0 0 0"/>
+    <key name="descente" qpos="12 -8 107 0.9990 0.0349 0.0262 0 0 0" qvel="1 -0.5 -10 0 0 0 0 0"/>
   </keyframe>
 </mujoco>

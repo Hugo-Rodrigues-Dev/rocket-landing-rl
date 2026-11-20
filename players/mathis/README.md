@@ -13,7 +13,7 @@ Référence à battre, le contrôleur PD écrit à la main (graines d'évaluatio
 | Phase | Taux de réussite | Précision (médiane) | Vitesse au contact | Inclinaison au contact |
 |---|---|---|---|---|
 | 0 | 100 % | 0,38 m | −0,63 m/s | 1,5° |
-| 1 | 31 % ⚠️ voir notes de l'étape 4 | 4,2 m | −0,63 m/s | 2,4° |
+| 1 | 100 % | 1,1 m | −0,64 m/s | 2,3° |
 
 ## Avancement de l'environnement
 
@@ -53,6 +53,12 @@ Captures rangées dans [`docs/captures/<etape>/`](docs/captures/), régénérée
 |---|---|---|---|
 | ![Trajectoires PD](docs/captures/etape-4/pd-trajectoires.png) | ![Approche](docs/captures/etape-4/pd-approche.png) | ![Arrondi](docs/captures/etape-4/pd-arrondi.png) | ![Posée](docs/captures/etape-4/pd-posee.png) |
 
+### Correctif phase 1 : barge mobile (20/11/2026)
+
+| Le PD suit la barge qui dérive (trace bleue) | Posée sur la barge en mouvement |
+|---|---|
+| ![Barge mobile](docs/captures/phase-1/pd-barge-mobile.png) | ![Posée](docs/captures/phase-1/pd-posee-barge-mobile.png) |
+
 ## Lancer
 
 ```bash
@@ -69,7 +75,7 @@ uv run python -m rocket_mathis.evaluate pd --phase 0   # évaluation du contrat 
 
 - Fusée : un corps rigide libre, 1 000 kg (réservoir 700, moteur 200, jambes 4 × 25). Centre de masse 1,5 m sous le milieu.
 - Seuls les 4 pieds doivent toucher le pont, tout autre contact sera un crash.
-- Barge `mocap` : position imposée par le code (`data.mocap_pos`), prête pour la phase 1.
+- Barge : position imposée par le code, prête pour la phase 1 (voir le correctif de la phase 1).
 - Pas de 2 ms : pose stable sur 4 pieds, redressement après un contact incliné. 5 s simulées ≈ 15 ms.
 
 ### Étape 2 : le moteur ([`engine.py`](src/rocket_mathis/engine.py))
@@ -94,5 +100,10 @@ uv run python -m rocket_mathis.evaluate pd --phase 0   # évaluation du contrat 
 - PD : vitesse de descente proportionnelle à l'altitude, PD horizontal qui donne l'inclinaison voulue, PD d'attitude qui donne la tuyère. Il ne lit que l'observation.
 - Le PD réussit 100 % en phase 0, contre 0 % au hasard (retour moyen 244 contre −4).
 - Correction de l'environnement : « pied posé » = moins de 1 cm du pont, et non plus un contact strict. Sinon, une fusée posée droite sur 3 pieds, le quatrième à 2 mm, n'était jamais déclarée posée.
-- ⚠️ Phase 1 : une barge `mocap` se téléporte, donc le frottement n'entraîne pas la fusée posée et le pont glisse sous elle. Il faut donner une vraie vitesse à la barge avant de travailler la phase 1.
+
+### Correctif phase 1 : la barge mobile
+
+- La barge n'est plus un `mocap`, qui se téléportait sans que le frottement entraîne la fusée. C'est maintenant un corps de 1 000 t sur deux glissières, dont la vitesse est imposée à chaque sous-pas. Elle est déclarée après la fusée, pour que `qpos[0:7]` reste la fusée.
+- La vitesse visée suit le processus d'Ornstein-Uhlenbeck, tiré une fois par décision. La barge la rejoint avec une accélération ≤ 0,5 m/s². Sans cette limite, le bruit tiré tous les 2 ms donnait des à-coups de plus de 20 m/s² qui renversaient la fusée posée.
+- Le PD passe de 31 % (puis 11 %) à 100 % en phase 1.
 

@@ -13,6 +13,7 @@ from rocket_quentin.env import DECISION_INTERVAL, RocketLandingEnv
 from rocket_quentin.pilot_attitude import attitude_action
 from rocket_quentin.pilot_lateral import lateral_action
 from rocket_quentin.pilot_vertical import vertical_action
+from rocket_quentin.pulse_throttle import PulseThrottle
 
 
 def frame_episode(camera: mujoco.MjvCamera, rocket_position: np.ndarray, deck_position: np.ndarray) -> None:
@@ -25,7 +26,10 @@ def frame_episode(camera: mujoco.MjvCamera, rocket_position: np.ndarray, deck_po
 def main() -> None:
     parser = ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--phase", type=int, choices=(0, 1), default=0, help="0 : barge fixe, 1 : barge mobile"
+        "--phase", type=int, choices=(0, 1, 2), default=0, help="0 : fixe, 1 : mobile, 2 : carburant"
+    )
+    parser.add_argument(
+        "--pulse-throttle", action="store_true", help="adapte la poussée au moteur de phase 2"
     )
     parser.add_argument("--seed", type=int, default=12, help="graine de départ (par défaut : 12)")
     parser.add_argument(
@@ -44,6 +48,8 @@ def main() -> None:
         help="départ du contrat, essai vertical, départ incliné ou départ décalé",
     )
     args = parser.parse_args()
+    if args.pulse_throttle and (args.phase != 2 or args.mode == "freefall"):
+        parser.error("--pulse-throttle nécessite la phase 2 et un mode de pilotage.")
     env = RocketLandingEnv(phase=args.phase)
     options = {"vertical_demo": True} if args.mode not in ("freefall", "pilot") else None
     if args.mode in ("attitude", "attitude-uncorrected"):
@@ -62,6 +68,8 @@ def main() -> None:
         "lateral-uncorrected": attitude_action,
         "pilot": lateral_action,
     }.get(args.mode)
+    if args.pulse_throttle:
+        policy = PulseThrottle(policy)
     observation, _ = env.reset(seed=args.seed, options=options)
     env.model.vis.headlight.ambient[:] = [0.55, 0.55, 0.55]
     deck_position = env.data.geom("deck").xpos
@@ -90,6 +98,8 @@ def main() -> None:
                     if restart.is_set():
                         restart.clear()
                         observation, _ = env.reset(seed=args.seed, options=options)
+                        if isinstance(policy, PulseThrottle):
+                            policy.reset()
                         finished = False
                     if not finished:
                         action = policy(observation) if policy is not None else [-1, 0, 0]
@@ -103,6 +113,8 @@ def main() -> None:
                             impact_speed = info.get("impact_speed_m_s")
                             if impact_speed is not None:
                                 print(f"Vitesse verticale au premier contact : {impact_speed:.2f} m/s")
+                            if "fuel_remaining_kg" in info:
+                                print(f"Carburant restant : {info['fuel_remaining_kg']:.2f} kg")
                             print(f"Distance horizontale au centre : {np.linalg.norm(observation[:2]):.2f} m")
                 window.sync()
                 sleep(max(0.0, DECISION_INTERVAL - (perf_counter() - frame_start)))

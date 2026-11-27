@@ -12,8 +12,9 @@ from stable_baselines3 import SAC
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 from rocket_quentin.demonstrations import ENTROPY_COMPARISON_SEEDS
-from rocket_quentin.env import RocketLandingEnv
+from rocket_quentin.env import OBSERVATION_SIZES, RocketLandingEnv
 from rocket_quentin.pilot_lateral import lateral_action
+from rocket_quentin.pulse_throttle import PulseThrottle
 
 CONTRACT_SEEDS = range(10_000, 10_100)
 DEVELOPMENT_SEEDS = range(5_000, 5_020)
@@ -22,7 +23,13 @@ COMPARISON_DIFFICULTIES = (0.0, 0.1, 0.2)
 
 
 def evaluate_policy(
-    policy: Callable, seeds: range, difficulty: float = 1.0, *, altitude_only=False, phase: int = 0
+    policy: Callable,
+    seeds: range,
+    difficulty: float = 1.0,
+    *,
+    altitude_only=False,
+    phase: int = 0,
+    reset_policy: Callable[[], None] | None = None,
 ) -> dict:
     env = RocketLandingEnv(start_difficulty=difficulty, altitude_only=altitude_only, phase=phase)
     outcomes = Counter()
@@ -30,9 +37,12 @@ def evaluate_policy(
     distances = []
     speeds = []
     tilts = []
+    fuel = []
     try:
         for seed in seeds:
             observation, _ = env.reset(seed=seed)
+            if reset_policy is not None:
+                reset_policy()
             while True:
                 observation, _, terminated, truncated, info = env.step(policy(observation))
                 if terminated or truncated:
@@ -42,13 +52,15 @@ def evaluate_policy(
             out_of_bounds_tilt += int(info.get("out_of_bounds_tilt", False))
             if outcome == "landed":
                 distances.append(np.linalg.norm(observation[:2]))
+                if "fuel_remaining_kg" in info:
+                    fuel.append(info["fuel_remaining_kg"])
             if "impact_speed_m_s" in info:
                 speeds.append(info["impact_speed_m_s"])
                 tilts.append(info["impact_tilt_deg"])
     finally:
         env.close()
 
-    return {
+    result = {
         "episodes": len(seeds),
         "success_rate": outcomes["landed"] / len(seeds),
         "precision_median_m": float(np.median(distances)) if distances else None,
@@ -57,6 +69,9 @@ def evaluate_policy(
         "outcomes": dict(outcomes),
         "out_of_bounds_tilt": out_of_bounds_tilt,
     }
+    if phase == 2:
+        result["fuel_remaining_mean_kg"] = float(np.mean(fuel)) if fuel else None
+    return result
 
 
 def sac_policy(model: SAC, normalizer: VecNormalize) -> Callable:
@@ -73,7 +88,10 @@ def main() -> None:
     source.add_argument("--run-dir", type=Path, help="dossier du modèle et de sa normalisation")
     source.add_argument("--model", type=Path, help="modèle .zip accompagné d'un fichier .pkl du même nom")
     parser.add_argument(
-        "--phase", type=int, choices=(0, 1), default=0, help="0 : barge fixe, 1 : barge mobile"
+        "--phase", type=int, choices=(0, 1, 2), default=0, help="0 : fixe, 1 : mobile, 2 : carburant"
+    )
+    parser.add_argument(
+        "--pulse-throttle", action="store_true", help="adapte la poussée au moteur de phase 2"
     )
     parser.add_argument(
         "--entropy-comparison", action="store_true", help="compare sur les graines 6200 à 6239"
@@ -98,26 +116,28 @@ def main() -> None:
         parser.error("--altitude-only est réservé aux mesures de développement.")
     if args.entropy_comparison and (args.phase or args.development or args.development_level is not None):
         parser.error("--entropy-comparison utilise les départs complets de phase 0.")
+    if args.pulse_throttle and args.phase != 2:
+        parser.error("--pulse-throttle nécessite --phase 2.")
 
     def report(policy):
+        controller = PulseThrottle(policy) if args.pulse_throttle else None
+        if controller is not None:
+            policy = controller
+        options = {
+            "altitude_only": args.altitude_only,
+            "phase": args.phase,
+            "reset_policy": controller.reset if controller is not None else None,
+        }
         if args.entropy_comparison:
             return evaluate_policy(policy, ENTROPY_COMPARISON_SEEDS)
         if args.development_level is not None:
-            return evaluate_policy(
-                policy,
-                COMPARISON_SEEDS,
-                args.development_level,
-                altitude_only=args.altitude_only,
-                phase=args.phase,
-            )
+            return evaluate_policy(policy, COMPARISON_SEEDS, args.development_level, **options)
         if args.development:
             return {
-                str(difficulty): evaluate_policy(
-                    policy, COMPARISON_SEEDS, difficulty, altitude_only=args.altitude_only, phase=args.phase
-                )
+                str(difficulty): evaluate_policy(policy, COMPARISON_SEEDS, difficulty, **options)
                 for difficulty in COMPARISON_DIFFICULTIES
             }
-        return evaluate_policy(policy, CONTRACT_SEEDS, phase=args.phase)
+        return evaluate_policy(policy, CONTRACT_SEEDS, **options)
 
     if args.run_dir is None and args.model is None:
         print(dumps(report(lateral_action), indent=2))
@@ -131,17 +151,22 @@ def main() -> None:
         normalizer_path = args.run_dir / "vec_normalize.pkl"
     torch.set_num_threads(1)
     model = SAC.load(model_path, device="cpu")
-    phase0_transfer = args.phase == 1 and model.observation_space.shape == (19,)
-    normalizer_phase = 0 if phase0_transfer else args.phase
+    observation_size = model.observation_space.shape[0]
+    if observation_size not in OBSERVATION_SIZES[: args.phase + 1]:
+        parser.error("Le format d'observation de ce modèle est incompatible avec la phase demandée.")
+    normalizer_phase = OBSERVATION_SIZES.index(observation_size)
     normalizer = VecNormalize.load(
         normalizer_path, DummyVecEnv([lambda: RocketLandingEnv(phase=normalizer_phase)])
     )
     normalizer.training = False
     try:
         policy = sac_policy(model, normalizer)
-        if phase0_transfer:
-            # Conserve les contacts et retire les deux composantes de vitesse absolue du pont.
-            result = report(lambda observation: policy(np.concatenate((observation[:15], observation[-4:]))))
+        if normalizer_phase != args.phase:
+            # Les nouvelles mesures sont insérées avant les quatre contacts.
+            prefix = observation_size - 4
+            result = report(
+                lambda observation: policy(np.concatenate((observation[:prefix], observation[-4:])))
+            )
         else:
             result = report(policy)
         print(dumps(result, indent=2))

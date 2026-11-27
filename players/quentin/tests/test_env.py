@@ -5,12 +5,15 @@ from gymnasium.utils.env_checker import check_env
 
 from rocket_quentin.barge import MAX_BARGE_ACCELERATION, MAX_BARGE_SPEED
 from rocket_quentin.env import DECISION_INTERVAL, RocketLandingEnv
+from rocket_quentin.fuel import INITIAL_FUEL_KG, MIN_THRUST_N, SPECIFIC_IMPULSE_S
 from rocket_quentin.pilot_attitude import attitude_action
 from rocket_quentin.pilot_lateral import lateral_action
 from rocket_quentin.pilot_vertical import vertical_action
+from rocket_quentin.pulse_throttle import PulseThrottle
+from rocket_quentin.thrust import MAX_THRUST_N
 
 
-@pytest.mark.parametrize("phase", [0, 1])
+@pytest.mark.parametrize("phase", [0, 1, 2])
 def test_gymnasium_api(phase):
     check_env(RocketLandingEnv(phase=phase), skip_render_check=True)
 
@@ -180,6 +183,63 @@ def test_phase1_water_and_flight_limits_follow_the_deck():
     env._barge.position[:] = [19, 0]
     mujoco.mj_forward(env.model, env.data)
     assert env._check_outcome()[1] == "out_of_bounds"
+
+
+def test_phase2_minimum_thrust_and_fuel_mass():
+    env = RocketLandingEnv(phase=2)
+    place_upright(env, [0, 0, 100])
+    rocket_id = env.model.body("rocket").id
+    assert env.model.body_mass[rocket_id] == pytest.approx(1080)
+
+    observation, _, _, _, info = env.step([0.199, 0, 0])
+    assert not env.data.xfrc_applied[rocket_id].any()
+    assert observation[5] == pytest.approx(-9.81 * DECISION_INTERVAL)
+    assert info["fuel_remaining_kg"] == INITIAL_FUEL_KG
+
+    observation, _, _, _, info = env.step([0.2, 0, 0])
+    remaining = INITIAL_FUEL_KG - MIN_THRUST_N * DECISION_INTERVAL / (SPECIFIC_IMPULSE_S * 9.81)
+    assert info["fuel_remaining_kg"] == pytest.approx(remaining)
+    assert observation[-5] == pytest.approx(remaining)
+    assert env.model.body_mass[rocket_id] == pytest.approx(1000 + remaining)
+    assert env.data.xfrc_applied[rocket_id, 2] == pytest.approx(MIN_THRUST_N)
+
+
+def test_phase2_tank_runs_out_during_a_physics_step_and_resets():
+    env = RocketLandingEnv(phase=2)
+    place_upright(env, [0, 0, 100])
+    fuel = env._fuel
+    remaining_time = 0.003
+    fuel.burn(MAX_THRUST_N, INITIAL_FUEL_KG * fuel.exhaust_speed / MAX_THRUST_N - remaining_time)
+    observation, _, terminated, truncated, info = env.step([1, 0, 0])
+
+    assert not (terminated or truncated)
+    assert info["fuel_remaining_kg"] == 0
+    assert env.data.time == pytest.approx(DECISION_INTERVAL)
+    assert env.model.opt.timestep == pytest.approx(0.005)
+    assert env.model.body_mass[fuel.rocket_id] == pytest.approx(1000)
+    assert not env.data.xfrc_applied[fuel.rocket_id].any()
+    assert observation[5] == pytest.approx(-9.81 * DECISION_INTERVAL + MAX_THRUST_N * remaining_time / 1000)
+
+    observation, _, _, _, info = env.step([1, 0, 0])
+    assert observation[-5] == 0
+    assert not env.data.xfrc_applied[fuel.rocket_id].any()
+    assert info["fuel_remaining_kg"] == 0
+    observation, info = env.reset(seed=123)
+    assert observation[-5] == INITIAL_FUEL_KG
+    assert info["fuel_remaining_kg"] == INITIAL_FUEL_KG
+    assert env.model.body_mass[fuel.rocket_id] == pytest.approx(1080)
+
+
+def test_pulse_throttle_respects_engine_limit_and_delivers_average_thrust():
+    controller = PulseThrottle(lambda _: [0.0, -0.1, 0.2])
+    observation = np.zeros(22)
+    observation[-5] = INITIAL_FUEL_KG
+    commands = np.array([controller(observation) for _ in range(100)])
+    assert commands[:, 0] == pytest.approx(np.where(commands[:, 0] < 0, -1.0, 0.2))
+    assert commands[:, 1:] == pytest.approx(np.tile([-0.1, 0.2], (100, 1)))
+    assert np.mean((commands[:, 0] + 1) / 2) == pytest.approx(0.54)
+    observation[-1] = 1
+    assert controller(observation)[0] == -1
 
 
 @pytest.mark.parametrize(("action", "velocity"), [(-1, -0.4905), (0, 0.0), (1, 0.4905)])

@@ -4,10 +4,11 @@ Environnement et agents de Quentin. Voir le [contrat](../../CONTRACT.md) pour le
 
 ## Où j'en suis
 
-| Phase | Validée | Taux de réussite | Précision (médiane) | Vitesse au contact | Algorithme |
-|---|---|---|---|---|---|
-| 0 | Oui | 96/100 | 0,21 m | 0,85 m/s | Imitation supervisée, DAgger |
-| 1 | Oui | 93/100 | 0,84 m | 1,02 m/s | Transfert du modèle DAgger de phase 0 |
+| Phase | Validée | Taux de réussite | Précision (médiane) | Vitesse au contact | Carburant restant (moyenne) | Algorithme |
+|---|---|---|---|---|---|---|
+| 0 | Oui | 96/100 | 0,21 m | 0,85 m/s | — | Imitation supervisée, DAgger |
+| 1 | Oui | 93/100 | 0,84 m | 1,02 m/s | — | Transfert du modèle DAgger de phase 0 |
+| 2 | Oui | 94/100 | 0,85 m | 1,07 m/s | 37,41 kg | Transfert du modèle DAgger avec commande pulsée |
 
 Pilote programmé à la main, utilisé comme référence en phase 0 sur les 100
 graines 10 000 à 10 099. Il a réussi les 100 atterrissages, avec un écart
@@ -15,6 +16,51 @@ médian de 0,16 m au centre, une vitesse verticale moyenne de 0,77 m/s vers
 le bas et une inclinaison moyenne de 0,65° au premier contact.
 
 ## Lancer
+
+### Phase 2 avec carburant
+
+`RocketLandingEnv(phase=2)` garde la barge mobile et ajoute 80 kg de
+carburant. La masse passe de 1 080 kg à 1 000 kg à mesure que le réservoir
+se vide. On conserve le centre de masse et on ajuste l'inertie
+proportionnellement à la masse. La consommation suit la poussée effective
+`T / (300 × g)`. Le moteur s'éteint sous 60 % de la poussée maximale ou
+quand le réservoir se vide, y compris au milieu d'un pas physique.
+L'observation ajoute le carburant restant en kilogrammes avant les quatre
+indicateurs de contact.
+
+La commande pulsée réutilise les poids de DAgger appris en phase 0. Elle
+ajuste la poussée demandée selon la masse estimée d'après le carburant
+restant. Si la demande est inférieure à 60 %, elle alterne moteur coupé
+et poussée à 60 % selon l'écart accumulé entre la demande et la poussée
+livrée. Chaque commande dure un pas de décision de 50 ms, avec une coupure
+possible en cas d'épuisement du carburant. Les angles de tuyère viennent
+du pilote ou du réseau. Au premier contact, la commande pulsée coupe le
+moteur.
+
+Les trois variantes ont été comparées sur les mêmes 20 départs de
+développement complets (graines 5100 à 5119).
+
+| Politique | Poses | Distance médiane au centre | Carburant moyen sur les réussites |
+|---|---:|---:|---:|
+| DAgger phase 0, commande directe | 2/20 | 0,76 m | 45,59 kg |
+| Pilote de référence avec commande pulsée | 20/20 | 0,62 m | 36,07 kg |
+| DAgger phase 0 avec commande pulsée | 20/20 | 1,00 m | 36,05 kg |
+
+Le modèle adapté atteint **94 poses sur 100** sur les graines officielles,
+pour un seuil de 85. La distance médiane au centre est de 0,85 m, la
+vitesse verticale relative moyenne au premier contact de 1,07 m/s et
+l'inclinaison moyenne au contact de 3,42°. Il reste en moyenne 37,41 kg
+de carburant sur les poses réussies. Les six échecs sont deux sorties
+de zone dues à l'inclinaison, deux atterrissages durs et deux chutes à l'eau.
+
+Depuis la racine du dépôt, la première commande ouvre la scène avec le
+pilote de référence. La seconde évalue le modèle adapté sur les graines
+officielles 10 000 à 10 099.
+
+```powershell
+uv run --locked python -m rocket_quentin.demo_episode --phase 2 --mode pilot --pulse-throttle --seed 12
+uv run --locked python -m rocket_quentin.evaluate --phase 2 --pulse-throttle --model players/quentin/models/phase0-dagger.zip
+```
 
 ### Phase 1 sur barge mobile
 

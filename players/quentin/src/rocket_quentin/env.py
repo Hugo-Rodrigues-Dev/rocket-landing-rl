@@ -8,6 +8,7 @@ import mujoco
 import numpy as np
 
 from rocket_quentin.barge import BargeMotion
+from rocket_quentin.fuel import FuelSystem
 from rocket_quentin.thrust import MAX_GIMBAL_DEG, MAX_THRUST_N, apply_thrust
 
 SCENE_PATH = Path(__file__).parent / "assets" / "scene.xml"
@@ -15,6 +16,7 @@ MOVING_SCENE_PATH = SCENE_PATH.with_name("scene_phase1.xml")
 DECISION_INTERVAL = 0.05
 MAX_DECISIONS = 600
 MAX_FLIGHT_TILT_DEG = 60.0
+OBSERVATION_SIZES = (19, 21, 22)
 LEG_NAMES = ("leg_ne", "leg_nw", "leg_se", "leg_sw")
 CURRICULUM_POWER = 3
 EASY_START = {
@@ -27,19 +29,23 @@ EASY_START = {
 
 
 class RocketLandingEnv(gym.Env):
-    """19 ou 21 observations en unités SI, trois commandes continues dans [-1, 1]."""
+    """Observations en unités SI et trois commandes continues dans [-1, 1]."""
 
     def __init__(self, start_difficulty: float = 1.0, *, altitude_only: bool = False, phase: int = 0):
-        if phase not in (0, 1):
-            raise ValueError("Les phases disponibles sont 0 (barge fixe) et 1 (barge mobile).")
+        if phase not in (0, 1, 2):
+            raise ValueError("Les phases disponibles sont 0, 1 et 2.")
         self.set_start_difficulty(start_difficulty)
         self.altitude_only = altitude_only
-        self.model = mujoco.MjModel.from_xml_path(str(MOVING_SCENE_PATH if phase == 1 else SCENE_PATH))
+        self.model = mujoco.MjModel.from_xml_path(str(MOVING_SCENE_PATH if phase >= 1 else SCENE_PATH))
         self.data = mujoco.MjData(self.model)
-        self._barge = BargeMotion(self.model, self.data) if phase == 1 else None
+        self._barge = BargeMotion(self.model, self.data) if phase >= 1 else None
+        self._fuel = FuelSystem(self.model) if phase == 2 else None
         self.action_space = gym.spaces.Box(-1.0, 1.0, shape=(3,), dtype=np.float32)
-        self.observation_space = gym.spaces.Box(-np.inf, np.inf, shape=(19 + 2 * phase,), dtype=np.float32)
-        self._substeps = round(DECISION_INTERVAL / self.model.opt.timestep)
+        self.observation_space = gym.spaces.Box(
+            -np.inf, np.inf, shape=(OBSERVATION_SIZES[phase],), dtype=np.float32
+        )
+        self._physics_interval = self.model.opt.timestep
+        self._substeps = round(DECISION_INTERVAL / self._physics_interval)
         self._joint = self.data.joint("rocket_free")
         self._rocket = self.data.body("rocket")
         self._hull_id = self.model.geom("hull").id
@@ -58,6 +64,8 @@ class RocketLandingEnv(gym.Env):
 
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
+        if self._fuel is not None:
+            self._fuel.reset()
         mujoco.mj_resetData(self.model, self.data)
         if self._barge is not None:
             self._barge.reset()
@@ -81,7 +89,10 @@ class RocketLandingEnv(gym.Env):
         mujoco.mj_kinematics(self.model, self.data)
         self._joint.qpos[2] += altitude - self._altitude()
         mujoco.mj_forward(self.model, self.data)
-        return self._observation(self._contacts), {"outcome": None}
+        info = {"outcome": None}
+        if self._fuel is not None:
+            info["fuel_remaining_kg"] = self._fuel.remaining_kg
+        return self._observation(self._contacts), info
 
     def set_start_difficulty(self, difficulty: float, *, previous_level_share: float = 0.0) -> None:
         """Règle les prochains départs et la part tirée au palier précédent."""
@@ -138,14 +149,7 @@ class RocketLandingEnv(gym.Env):
             self._barge.choose_target(self.np_random, DECISION_INTERVAL)
 
         for _ in range(self._substeps):
-            apply_thrust(self.model, self.data, thrust, tilt_x * MAX_GIMBAL_DEG, tilt_y * MAX_GIMBAL_DEG)
-            if self._barge is None:
-                mujoco.mj_step(self.model, self.data)
-            else:
-                self._barge.step()
-            # Relit les contacts à la position atteinte, avant le prochain pas de physique.
-            mujoco.mj_forward(self.model, self.data)
-            contacts, outcome = self._check_outcome()
+            contacts, outcome = self._physics_step(thrust, tilt_x * MAX_GIMBAL_DEG, tilt_y * MAX_GIMBAL_DEG)
             if outcome is not None:
                 break
 
@@ -153,6 +157,8 @@ class RocketLandingEnv(gym.Env):
         truncated = not terminated and self._decisions >= MAX_DECISIONS
         self._needs_reset = terminated or truncated
         info = {"outcome": "timeout" if truncated else outcome}
+        if self._fuel is not None:
+            info["fuel_remaining_kg"] = self._fuel.remaining_kg
         if self._needs_reset:
             info["start_difficulty"] = self._episode_start_difficulty
             info["episode_steps"] = self._decisions
@@ -165,6 +171,38 @@ class RocketLandingEnv(gym.Env):
         if terminated:
             reward = 100.0 if outcome == "landed" else -100.0
         return self._observation(contacts), reward, terminated, truncated, info
+
+    def _physics_step(self, thrust: float, tilt_x: float, tilt_y: float):
+        if self._fuel is None:
+            return self._advance(thrust, tilt_x, tilt_y)
+
+        interval = self._physics_interval
+        burn_duration = self._fuel.burn(thrust, interval)
+        if burn_duration == 0:
+            return self._advance(0.0, tilt_x, tilt_y)
+        if burn_duration == interval:
+            return self._advance(thrust, tilt_x, tilt_y)
+
+        # Le dernier pas peut être partagé entre moteur allumé et roue libre.
+        self.model.opt.timestep = burn_duration
+        try:
+            contacts, outcome = self._advance(thrust, tilt_x, tilt_y)
+            if outcome is not None:
+                return contacts, outcome
+            self.model.opt.timestep = interval - burn_duration
+            return self._advance(0.0, tilt_x, tilt_y)
+        finally:
+            self.model.opt.timestep = interval
+
+    def _advance(self, thrust: float, tilt_x: float, tilt_y: float):
+        apply_thrust(self.model, self.data, thrust, tilt_x, tilt_y)
+        if self._barge is None:
+            mujoco.mj_step(self.model, self.data)
+        else:
+            self._barge.step()
+        # Relit les contacts à la position atteinte, avant le prochain pas de physique.
+        mujoco.mj_forward(self.model, self.data)
+        return self._check_outcome()
 
     def _sample_disk(self, radius):
         direction = self.np_random.uniform(0, tau)
@@ -186,6 +224,8 @@ class RocketLandingEnv(gym.Env):
         if self._barge is not None:
             velocity[:2] -= self._barge.velocity
             values.append(self._barge.velocity)
+        if self._fuel is not None:
+            values.append([self._fuel.remaining_kg])
         return np.concatenate((*values, contacts)).astype(np.float32)
 
     def _check_outcome(self):

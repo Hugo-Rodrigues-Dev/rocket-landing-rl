@@ -3,14 +3,16 @@ import numpy as np
 import pytest
 from gymnasium.utils.env_checker import check_env
 
-from rocket_quentin.env import RocketLandingEnv
+from rocket_quentin.barge import MAX_BARGE_ACCELERATION, MAX_BARGE_SPEED
+from rocket_quentin.env import DECISION_INTERVAL, RocketLandingEnv
 from rocket_quentin.pilot_attitude import attitude_action
 from rocket_quentin.pilot_lateral import lateral_action
 from rocket_quentin.pilot_vertical import vertical_action
 
 
-def test_gymnasium_api():
-    check_env(RocketLandingEnv(), skip_render_check=True)
+@pytest.mark.parametrize("phase", [0, 1])
+def test_gymnasium_api(phase):
+    check_env(RocketLandingEnv(phase=phase), skip_render_check=True)
 
 
 def test_seeded_start_meets_contract():
@@ -98,12 +100,86 @@ def test_episode_reports_the_level_actually_drawn_at_reset():
     pytest.fail("L'épisode ne s'est pas terminé.")
 
 
-def place_upright(env, position):
-    env.reset(seed=123)
+def place_upright(env, position, *, seed=123):
+    env.reset(seed=seed)
     joint = env.data.joint("rocket_free")
     joint.qpos[:] = [*position, 1, 0, 0, 0]
     joint.qvel[:] = 0
     mujoco.mj_forward(env.model, env.data)
+
+
+def test_phase1_motion_is_seeded_and_respects_speed_and_acceleration_limits():
+    env = RocketLandingEnv(phase=1)
+
+    def trajectory(seed):
+        place_upright(env, [0, 0, 100], seed=seed)
+        assert env._barge.position == pytest.approx([0, 0])
+        assert env._barge.velocity == pytest.approx([0, 0])
+        previous_velocity = env._barge.velocity.copy()
+        positions = []
+        for _ in range(160):
+            obs, _, terminated, truncated, _ = env.step([0, 0, 0])
+            assert not (terminated or truncated)
+            assert obs[:2] == pytest.approx(-env._barge.position)
+            assert obs[3:5] == pytest.approx(-env._barge.velocity)
+            assert obs[15:17] == pytest.approx(env._barge.velocity)
+            assert not obs[-4:].any()
+            assert np.linalg.norm(env._barge.target_velocity) <= MAX_BARGE_SPEED + 1e-10
+            assert np.linalg.norm(env._barge.velocity) <= MAX_BARGE_SPEED + 1e-10
+            assert np.linalg.norm(env._barge.velocity - previous_velocity) <= (
+                MAX_BARGE_ACCELERATION * DECISION_INTERVAL + 1e-10
+            )
+            previous_velocity = env._barge.velocity.copy()
+            positions.append(env._barge.position.copy())
+        return np.array(positions)
+
+    first = trajectory(12)
+    assert np.linalg.norm(first[-1]) > 0.1
+    assert np.array_equal(first, trajectory(12))
+    assert not np.array_equal(first, trajectory(13))
+
+
+def test_moving_deck_transfers_velocity_by_friction():
+    env = RocketLandingEnv(phase=1)
+    place_upright(env, [20, 0, 6.615])
+    env._barge.position[:] = [20, 0]
+    env._barge.velocity[:] = [1, 0]
+    mujoco.mj_forward(env.model, env.data)
+
+    contacts, outcome = env._check_outcome()
+    assert contacts.all()
+    assert outcome is None  # La fusée est immobile dans le monde et glisse sur le pont.
+
+    # Le pont accélère depuis le repos selon la limite du contrat.
+    env._barge.velocity[:] = 0
+    env._barge.acceleration[:] = [MAX_BARGE_ACCELERATION, 0]
+    mujoco.mj_forward(env.model, env.data)
+    for _ in range(400):
+        env._barge.step()
+        mujoco.mj_forward(env.model, env.data)
+
+    contacts, outcome = env._check_outcome()
+    assert env._barge.velocity[0] == pytest.approx(1)
+    assert env.data.joint("rocket_free").qvel[0] == pytest.approx(1, abs=0.02)
+    assert env._observation(contacts)[0] == pytest.approx(0, abs=0.02)
+    assert contacts.all()
+    assert outcome == "landed"
+
+
+def test_phase1_water_and_flight_limits_follow_the_deck():
+    env = RocketLandingEnv(phase=1)
+    place_upright(env, [0, 0, 5.9])
+    env._barge.position[:] = [20, 0]
+    mujoco.mj_forward(env.model, env.data)
+    assert env._check_outcome()[1] == "water"
+
+    place_upright(env, [120, 0, 100])
+    env._barge.position[:] = [20, 0]
+    mujoco.mj_forward(env.model, env.data)
+    assert env._check_outcome()[1] is None
+    env._barge.position[:] = [19, 0]
+    mujoco.mj_forward(env.model, env.data)
+    assert env._check_outcome()[1] == "out_of_bounds"
 
 
 @pytest.mark.parametrize(("action", "velocity"), [(-1, -0.4905), (0, 0.0), (1, 0.4905)])

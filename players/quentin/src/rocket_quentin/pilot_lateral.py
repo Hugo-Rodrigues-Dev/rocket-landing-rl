@@ -1,4 +1,4 @@
-"""Guidage vers le centre du pont sur barge fixe."""
+"""Guidage vers le centre du pont en coordonnées relatives."""
 
 import numpy as np
 

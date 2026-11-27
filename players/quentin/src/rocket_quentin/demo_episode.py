@@ -24,6 +24,9 @@ def frame_episode(camera: mujoco.MjvCamera, rocket_position: np.ndarray, deck_po
 
 def main() -> None:
     parser = ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--phase", type=int, choices=(0, 1), default=0, help="0 : barge fixe, 1 : barge mobile"
+    )
     parser.add_argument("--seed", type=int, default=12, help="graine de départ (par défaut : 12)")
     parser.add_argument(
         "--mode",
@@ -41,7 +44,7 @@ def main() -> None:
         help="départ du contrat, essai vertical, départ incliné ou départ décalé",
     )
     args = parser.parse_args()
-    env = RocketLandingEnv()
+    env = RocketLandingEnv(phase=args.phase)
     options = {"vertical_demo": True} if args.mode not in ("freefall", "pilot") else None
     if args.mode in ("attitude", "attitude-uncorrected"):
         options = {"vertical_demo": True, "initial_pitch_deg": 5.0}

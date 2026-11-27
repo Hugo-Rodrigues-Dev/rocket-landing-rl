@@ -7,6 +7,7 @@ Environnement et agents de Quentin. Voir le [contrat](../../CONTRACT.md) pour le
 | Phase | Validée | Taux de réussite | Précision (médiane) | Vitesse au contact | Algorithme |
 |---|---|---|---|---|---|
 | 0 | Oui | 96/100 | 0,21 m | 0,85 m/s | Imitation supervisée, DAgger |
+| 1 | Oui | 93/100 | 0,84 m | 1,02 m/s | Transfert du modèle DAgger de phase 0 |
 
 Pilote programmé à la main, utilisé comme référence en phase 0 sur les 100
 graines 10 000 à 10 099. Il a réussi les 100 atterrissages, avec un écart
@@ -14,6 +15,53 @@ médian de 0,16 m au centre, une vitesse verticale moyenne de 0,77 m/s vers
 le bas et une inclinaison moyenne de 0,65° au premier contact.
 
 ## Lancer
+
+### Phase 1 sur barge mobile
+
+`RocketLandingEnv(phase=1)` démarre avec la barge au repos. Toutes les
+0,05 s, on tire sa vitesse visée à partir d'un processus d'Ornstein-Uhlenbeck
+(θ = 0,5, σ = 1), puis on borne sa norme à 3 m/s. Le pont rejoint cette
+vitesse avec une accélération horizontale d'au plus 0,5 m/s². Ses glissières
+MuJoCo donnent au pont une vitesse connue du solveur de contacts. La fusée
+peut ainsi être entraînée par frottement.
+
+L'observation de phase 1 comporte 21 valeurs. La position horizontale et
+la vitesse de la fusée sont exprimées par rapport au pont. Deux composantes
+de vitesse actuelle de la barge s'ajoutent juste avant les quatre contacts.
+La condition de pose utilise aussi la vitesse relative au pont. Les trois
+commandes restent la poussée et les deux angles de tuyère. Voir la
+[fiche MDP](../../docs/mdp-etape-1.pdf) et le [contrat](../../CONTRACT.md).
+
+Depuis la racine du dépôt, ces commandes ouvrent la scène animée et comparent
+le pilote de référence au modèle DAgger sur les 20 départs de développement
+complets (graines 5100 à 5119).
+
+```powershell
+uv run --locked python -m rocket_quentin.demo_episode --phase 1 --mode pilot --seed 12
+uv run --locked python -m rocket_quentin.evaluate --phase 1 --development-level 1
+uv run --locked python -m rocket_quentin.evaluate --phase 1 --development-level 1 --model players/quentin/models/phase0-dagger.zip
+```
+
+| Politique | Poses | Distance médiane au centre |
+|---|---:|---:|
+| Pilote de référence | 20/20 | 0,59 m |
+| DAgger transféré de la phase 0 | 20/20 | 0,94 m |
+
+Le transfert réutilise les poids et la normalisation appris en phase 0,
+sans entraînement supplémentaire. Il transmet
+au réseau les mesures relatives et les quatre contacts, en retirant les
+deux nouvelles composantes de vitesse absolue de la barge.
+
+Sur les graines officielles 10 000 à 10 099, le transfert obtient **93 poses
+sur 100**, au-dessus du seuil de 90. La distance médiane au centre est de
+0,84 m. Au premier contact, la vitesse verticale relative moyenne est de
+1,02 m/s et l'inclinaison moyenne de 3,33°. Les sept échecs se répartissent
+entre trois atterrissages durs, deux sorties de zone liées à l'inclinaison
+et deux chutes à l'eau. La commande suivante reproduit ce test.
+
+```powershell
+uv run --locked python -m rocket_quentin.evaluate --phase 1 --model players/quentin/models/phase0-dagger.zip
+```
 
 ### Préentraîner SAC par imitation
 

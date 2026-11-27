@@ -3,21 +3,21 @@ import numpy as np
 import pytest
 from gymnasium.utils.env_checker import check_env
 
-from rocket_quentin.barge import (
+from rocket_quentin.common.barge import (
     HEAVE_AMPLITUDE,
     HEAVE_PERIOD,
     MAX_BARGE_ACCELERATION,
     MAX_BARGE_SPEED,
     TILT_AMPLITUDE,
 )
-from rocket_quentin.env import DECISION_INTERVAL, RocketLandingEnv
-from rocket_quentin.fuel import INITIAL_FUEL_KG, MIN_THRUST_N, SPECIFIC_IMPULSE_S
-from rocket_quentin.pilot_attitude import attitude_action
-from rocket_quentin.pilot_lateral import lateral_action
-from rocket_quentin.pilot_vertical import vertical_action
-from rocket_quentin.pulse_throttle import PulseThrottle
-from rocket_quentin.thrust import MAX_THRUST_N
-from rocket_quentin.wind import DRAG_FACTOR, MAX_GUST_M_S, RCS_TORQUE_LIMITS, drag_force
+from rocket_quentin.common.env import DECISION_INTERVAL, RocketLandingEnv
+from rocket_quentin.common.fuel import INITIAL_FUEL_KG, MIN_THRUST_N, SPECIFIC_IMPULSE_S
+from rocket_quentin.common.thrust import MAX_THRUST_N
+from rocket_quentin.common.wind import DRAG_FACTOR, MAX_GUST_M_S, RCS_TORQUE_LIMITS, drag_force
+from rocket_quentin.dagger.pilot_attitude import attitude_action
+from rocket_quentin.dagger.pilot_lateral import lateral_action
+from rocket_quentin.dagger.pilot_vertical import vertical_action
+from rocket_quentin.dagger.pulse_throttle import PulseThrottle
 
 
 @pytest.mark.parametrize("phase", [0, 1, 2, 3, 4])

@@ -2,9 +2,9 @@
 
 import numpy as np
 
-from rocket_quentin.pilot_attitude import attitude_action
-from rocket_quentin.pilot_lateral import lateral_action
-from rocket_quentin.pilot_vertical import GRAVITY_M_S2
+from rocket_quentin.dagger.pilot_attitude import attitude_action
+from rocket_quentin.dagger.pilot_lateral import lateral_action
+from rocket_quentin.dagger.pilot_vertical import GRAVITY_M_S2
 
 APPROACH_HEIGHT_M = 1.5
 

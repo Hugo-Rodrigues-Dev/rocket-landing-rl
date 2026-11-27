@@ -2,8 +2,8 @@
 
 import numpy as np
 
-from rocket_quentin.pilot_attitude import attitude_action
-from rocket_quentin.pilot_vertical import GRAVITY_M_S2
+from rocket_quentin.dagger.pilot_attitude import attitude_action
+from rocket_quentin.dagger.pilot_vertical import GRAVITY_M_S2
 
 POSITION_GAIN_S_INV = 0.4
 SPEED_GAIN_S_INV = 1.1

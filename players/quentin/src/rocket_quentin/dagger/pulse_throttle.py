@@ -4,7 +4,7 @@ from collections.abc import Callable
 
 import numpy as np
 
-from rocket_quentin.fuel import FUEL_OBSERVATION_INDEX, MIN_THRUST_FRACTION
+from rocket_quentin.common.fuel import FUEL_OBSERVATION_INDEX, MIN_THRUST_FRACTION
 
 DRY_MASS_KG = 1000.0
 

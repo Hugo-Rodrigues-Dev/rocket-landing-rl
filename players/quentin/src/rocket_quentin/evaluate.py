@@ -1,8 +1,6 @@
 """Évalue une politique sans apprentissage sur une barge fixe ou mobile."""
 
 from argparse import ArgumentParser
-from collections import Counter
-from collections.abc import Callable
 from functools import partial
 from json import dumps
 from pathlib import Path
@@ -12,78 +10,17 @@ import torch
 from stable_baselines3 import SAC
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
-from rocket_quentin.demonstrations import ENTROPY_COMPARISON_SEEDS
-from rocket_quentin.env import OBSERVATION_SIZES, RocketLandingEnv
-from rocket_quentin.learned_landing import LandingPolicy
-from rocket_quentin.pilot_lateral import lateral_action
-from rocket_quentin.pulse_throttle import PulseThrottle
-from rocket_quentin.reference import reference_action
-from rocket_quentin.wave_approach import wave_reference
-
-CONTRACT_SEEDS = range(10_000, 10_100)
-DEVELOPMENT_SEEDS = range(5_000, 5_020)
-COMPARISON_SEEDS = range(5_100, 5_120)
-COMPARISON_DIFFICULTIES = (0.0, 0.1, 0.2)
-
-
-def evaluate_policy(
-    policy: Callable,
-    seeds: range,
-    difficulty: float = 1.0,
-    *,
-    altitude_only=False,
-    phase: int = 0,
-    reset_policy: Callable[[], None] | None = None,
-) -> dict:
-    env = RocketLandingEnv(start_difficulty=difficulty, altitude_only=altitude_only, phase=phase)
-    outcomes = Counter()
-    out_of_bounds_tilt = 0
-    distances = []
-    speeds = []
-    tilts = []
-    fuel = []
-    try:
-        for seed in seeds:
-            observation, _ = env.reset(seed=seed)
-            if reset_policy is not None:
-                reset_policy()
-            while True:
-                observation, _, terminated, truncated, info = env.step(policy(observation))
-                if terminated or truncated:
-                    break
-            outcome = info["outcome"]
-            outcomes[outcome] += 1
-            out_of_bounds_tilt += int(info.get("out_of_bounds_tilt", False))
-            if outcome == "landed":
-                distances.append(np.linalg.norm(observation[:2]))
-                if "fuel_remaining_kg" in info:
-                    fuel.append(info["fuel_remaining_kg"])
-            if "impact_speed_m_s" in info:
-                speeds.append(info["impact_speed_m_s"])
-                tilts.append(info["impact_tilt_deg"])
-    finally:
-        env.close()
-
-    result = {
-        "episodes": len(seeds),
-        "success_rate": outcomes["landed"] / len(seeds),
-        "precision_median_m": float(np.median(distances)) if distances else None,
-        "impact_speed_mean_m_s": float(np.mean(speeds)) if speeds else None,
-        "impact_tilt_mean_deg": float(np.mean(tilts)) if tilts else None,
-        "outcomes": dict(outcomes),
-        "out_of_bounds_tilt": out_of_bounds_tilt,
-    }
-    if phase >= 2:
-        result["fuel_remaining_mean_kg"] = float(np.mean(fuel)) if fuel else None
-    return result
-
-
-def sac_policy(model: SAC, normalizer: VecNormalize) -> Callable:
-    def action(observation: np.ndarray) -> np.ndarray:
-        normalized = normalizer.normalize_obs(observation)
-        return model.predict(normalized, deterministic=True)[0]
-
-    return action
+from rocket_quentin.common.env import ACTION_SIZES, OBSERVATION_SIZES, RocketLandingEnv
+from rocket_quentin.common.evaluation import (
+    COMPARISON_DIFFICULTIES,
+    COMPARISON_SEEDS,
+    CONTRACT_SEEDS,
+    evaluate_policy,
+    sac_policy,
+)
+from rocket_quentin.common.evaluation import (
+    DEVELOPMENT_SEEDS as DEVELOPMENT_SEEDS,
+)
 
 
 def main() -> None:
@@ -132,16 +69,15 @@ def main() -> None:
     if (args.model or args.run_dir) and (args.pulse_throttle or args.wave_approach):
         parser.error("Les options du pilote de référence sont réservées aux essais sans modèle.")
 
-    def report(policy):
-        controller = PulseThrottle(policy) if args.pulse_throttle else None
-        if controller is not None:
-            policy = controller
+    def report(policy, reset_policy=None):
         options = {
             "altitude_only": args.altitude_only,
             "phase": args.phase,
-            "reset_policy": controller.reset if controller is not None else None,
+            "reset_policy": reset_policy,
         }
         if args.entropy_comparison:
+            from rocket_quentin.dagger.demonstrations import ENTROPY_COMPARISON_SEEDS
+
             return evaluate_policy(policy, ENTROPY_COMPARISON_SEEDS)
         if args.development_level is not None:
             return evaluate_policy(policy, COMPARISON_SEEDS, args.development_level, **options)
@@ -153,25 +89,34 @@ def main() -> None:
         return evaluate_policy(policy, CONTRACT_SEEDS, **options)
 
     if args.run_dir is None and args.model is None:
+        from rocket_quentin.dagger.pilot_lateral import lateral_action
+        from rocket_quentin.dagger.pulse_throttle import PulseThrottle
+        from rocket_quentin.dagger.reference import reference_action
+        from rocket_quentin.dagger.wave_approach import wave_reference
+
         if args.wave_approach:
             policy = wave_reference
         elif args.pulse_throttle:
             policy = lateral_action
         else:
             policy = partial(reference_action, phase=args.phase)
-        print(dumps(report(policy), indent=2))
+        if args.pulse_throttle:
+            policy = PulseThrottle(policy)
+            result = report(policy, policy.reset)
+        else:
+            result = report(policy)
+        print(dumps(result, indent=2))
         return
 
     torch.set_num_threads(1)
     if args.model and args.model.suffix == ".pt":
+        from rocket_quentin.dagger.learned_landing import LandingPolicy
+
         policy = LandingPolicy.load(args.model)
         if policy.phase != args.phase:
             parser.error("Le réseau doit être évalué dans sa phase d'entraînement.")
         print(dumps(report(policy.action), indent=2))
         return
-    if args.phase == 4:
-        parser.error("La phase 4 nécessite un réseau .pt qui produit aussi les commandes RCS.")
-
     if args.model:
         model_path = args.model
         normalizer_path = model_path.with_suffix(".pkl")
@@ -179,6 +124,8 @@ def main() -> None:
         model_path = args.run_dir / "model.zip"
         normalizer_path = args.run_dir / "vec_normalize.pkl"
     model = SAC.load(model_path, device="cpu")
+    if model.action_space.shape != (ACTION_SIZES[args.phase],):
+        parser.error("Le modèle doit produire toutes les commandes de la phase demandée.")
     observation_size = model.observation_space.shape[0]
     if observation_size not in OBSERVATION_SIZES[: args.phase + 1]:
         parser.error("Le format d'observation de ce modèle est incompatible avec la phase demandée.")

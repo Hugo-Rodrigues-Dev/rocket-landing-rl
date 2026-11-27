@@ -2,10 +2,10 @@
 
 import numpy as np
 
-from rocket_quentin.fuel import FUEL_OBSERVATION_INDEX, MIN_THRUST_FRACTION
-from rocket_quentin.pilot_lateral import lateral_action
-from rocket_quentin.wave_approach import APPROACH_HEIGHT_M, wave_reference
-from rocket_quentin.wind import drag_force
+from rocket_quentin.common.fuel import FUEL_OBSERVATION_INDEX, MIN_THRUST_FRACTION
+from rocket_quentin.common.wind import drag_force
+from rocket_quentin.dagger.pilot_lateral import lateral_action
+from rocket_quentin.dagger.wave_approach import APPROACH_HEIGHT_M, wave_reference
 
 
 def wind_reference(observation: np.ndarray) -> tuple[list[float], np.ndarray]:

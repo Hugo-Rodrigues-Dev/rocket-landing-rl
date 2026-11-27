@@ -5,8 +5,8 @@ from math import atan2, cos, degrees, sin, tau
 import mujoco
 import numpy as np
 
-from rocket_quentin.env import RocketLandingEnv
-from rocket_quentin.thrust import MAX_GIMBAL_DEG, MAX_THRUST_N
+from rocket_quentin.common.env import RocketLandingEnv
+from rocket_quentin.common.thrust import MAX_GIMBAL_DEG, MAX_THRUST_N
 
 ELLIPSOID = mujoco.mjtGeom.mjGEOM_ELLIPSOID
 LINE = mujoco.mjtGeom.mjGEOM_LINE

@@ -2,8 +2,8 @@ import numpy as np
 import pytest
 import torch
 
-from rocket_quentin.env import OBSERVATION_SIZES
-from rocket_quentin.learned_landing import MIN_POWERED_COMMAND, LandingPolicy
+from rocket_quentin.common.env import OBSERVATION_SIZES
+from rocket_quentin.dagger.learned_landing import MIN_POWERED_COMMAND, LandingPolicy
 
 
 @pytest.mark.parametrize(("phase", "rcs"), [(3, ()), (4, (0.5, 0.1, -0.5))])

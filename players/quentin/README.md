@@ -2,9 +2,43 @@
 
 Environnement et agents de Quentin. Voir le [contrat](../../CONTRACT.md) pour le problème et les critères.
 
-## Où j'en suis
+La [méthodologie](METHODOLOGIE.md) explique le rôle de SAC, de l’imitation et de DAgger dans le projet.
 
-| Phase | Validée | Taux de réussite | Précision (médiane) | Vitesse au contact | Carburant restant (moyenne) | Algorithme |
+## Apprentissage par renforcement avec SAC
+
+Le parcours actif entraîne SAC à partir de poids aléatoires. L’agent choisit ses actions, observe leurs conséquences dans Gymnasium et apprend à partir des récompenses. Le curriculum adapte la difficulté des départs aux performances mesurées sur des graines de développement. Les graines du contrat sont réservées au test final.
+
+- `src/rocket_quentin/common/` contient le simulateur des phases 0 à 4, la scène MuJoCo, le rendu et les fonctions de récompense.
+- `src/rocket_quentin/sac/` contient l’entraînement par renforcement. Les runs locaux et leurs checkpoints sont enregistrés dans `runs/sac/`.
+- `src/rocket_quentin/dagger/` et `models/dagger/` conservent les scripts et modèles d’imitation pour les comparaisons.
+
+Depuis la racine du dépôt, cette commande reproduit l’essai de phase 4, avec les vagues, le vent et le RCS actifs dès le premier palier. La récompense `approach` ajoute un signal de progression vers le pont et de stabilité à proximité du contact.
+
+```powershell
+foreach ($trainingSeed in 0, 1, 2) {
+    uv run --locked python -m rocket_quentin.sac.train_sac --phase 4 --steps 48000 --reward approach --curriculum flight --eval-every 4000 --previous-level-share 0.15 --probe-every 16000 --probe-levels 1 --seed $trainingSeed
+}
+```
+
+Voir les [commandes d’évaluation SAC](models/sac/README.md) pour tester un checkpoint.
+
+### Résultats de l’essai SAC en phase 4
+
+| Graine d’entraînement | Premier palier, jeu de promotion | Premier palier, jeu de comparaison | Départs complets, jeu de comparaison |
+|---|---:|---:|---:|
+| 0 | 6/20 | 10/20 | 0/20 |
+| 1 | 4/20 | 0/20 | 0/20 |
+| 2 | 15/20 | 17/20 | 0/20 |
+
+Scores à 48 000 pas. Le curriculum utilise les graines 5000 à 5019 pour
+les promotions. Aucun run n’a atteint le seuil de 16/20 sur ce jeu pendant
+l’entraînement. Les mesures de comparaison utilisent les graines 5100 à 5119.
+Les trois checkpoints sont conservés localement dans `runs/sac/`. Les graines
+officielles restent réservées à un candidat qui réussit les départs complets.
+
+## Résultats historiques de l’imitation supervisée
+
+| Phase | Seuil du contrat atteint | Taux de réussite | Précision (médiane) | Vitesse au contact | Carburant restant (moyenne) | Algorithme |
 |---|---|---|---|---|---|---|
 | 0 | Oui | 96/100 | 0,21 m | 0,85 m/s | — | Imitation supervisée, DAgger |
 | 1 | Oui | 93/100 | 0,84 m | 1,02 m/s | — | Transfert du modèle DAgger de phase 0 |
@@ -17,7 +51,7 @@ graines 10 000 à 10 099. Il a réussi les 100 atterrissages, avec un écart
 médian de 0,16 m au centre, une vitesse verticale moyenne de 0,77 m/s vers
 le bas et une inclinaison moyenne de 0,65° au premier contact.
 
-## Lancer
+## Simulateur et comparaisons par phase
 
 ### Phase 4 avec vent et RCS
 
@@ -59,10 +93,10 @@ les poses réussies. Les échecs sont dix sorties de zone dues à
 l'inclinaison et une chute à l'eau.
 
 ```powershell
-uv run --locked python -m rocket_quentin.demo_episode --phase 4 --mode pilot --seed 12
-uv run --locked python -m rocket_quentin.demo_episode --model players/quentin/models/phase4-autonomous.pt --seed 12
+uv run --locked python -m rocket_quentin.common.demo_episode --phase 4 --mode pilot --seed 12
+uv run --locked python -m rocket_quentin.common.demo_episode --model players/quentin/models/dagger/phase4-autonomous.pt --seed 12
 uv run --locked python -m rocket_quentin.evaluate --phase 4 --development-level 1
-uv run --locked python -m rocket_quentin.evaluate --phase 4 --model players/quentin/models/phase4-autonomous.pt
+uv run --locked python -m rocket_quentin.evaluate --phase 4 --model players/quentin/models/dagger/phase4-autonomous.pt
 ```
 
 Dans la démo 3D, les mesures du vent et de la barge s'affichent à gauche.
@@ -93,7 +127,7 @@ L'évaluation de l'agent utilise le réseau seul pendant tout le vol.
 
 ```powershell
 uv run --locked python -m rocket_quentin.evaluate --phase 3 --development-level 1
-uv run --locked python -m rocket_quentin.evaluate --phase 3 --model players/quentin/models/phase3-autonomous.pt
+uv run --locked python -m rocket_quentin.evaluate --phase 3 --model players/quentin/models/dagger/phase3-autonomous.pt
 ```
 
 ### Phase 2 avec carburant
@@ -115,10 +149,10 @@ réseau produit toutes les commandes du début à la fin de l'épisode.
 
 ```powershell
 uv run --locked python -m rocket_quentin.evaluate --phase 2 --development-level 1
-uv run --locked python -m rocket_quentin.evaluate --phase 2 --model players/quentin/models/phase2-autonomous.pt
+uv run --locked python -m rocket_quentin.evaluate --phase 2 --model players/quentin/models/dagger/phase2-autonomous.pt
 ```
 
-### Entraîner les agents autonomes à partir de la phase 2
+### Historique de l’imitation à partir de la phase 2
 
 Le pilote de référence fournit les commandes sur 160 départs de collecte
 (graines 4000 à 4159). On conserve les vols réussis pour l'imitation
@@ -132,9 +166,9 @@ départs de développement 5100 à 5119.
 
 ```powershell
 foreach ($phase in 2, 3, 4) {
-    uv run --locked python -m rocket_quentin.phase_demonstrations --phase $phase
+    uv run --locked python -m rocket_quentin.dagger.phase_demonstrations --phase $phase
     foreach ($trainingSeed in 0, 1, 2) {
-        uv run --locked python -m rocket_quentin.train_landing --phase $phase --seed $trainingSeed
+        uv run --locked python -m rocket_quentin.dagger.train_landing --phase $phase --seed $trainingSeed
     }
 }
 ```
@@ -206,9 +240,9 @@ le pilote de référence au modèle DAgger sur les 20 départs de développement
 complets (graines 5100 à 5119).
 
 ```powershell
-uv run --locked python -m rocket_quentin.demo_episode --phase 1 --mode pilot --seed 12
+uv run --locked python -m rocket_quentin.common.demo_episode --phase 1 --mode pilot --seed 12
 uv run --locked python -m rocket_quentin.evaluate --phase 1 --development-level 1
-uv run --locked python -m rocket_quentin.evaluate --phase 1 --development-level 1 --model players/quentin/models/phase0-dagger.zip
+uv run --locked python -m rocket_quentin.evaluate --phase 1 --development-level 1 --model players/quentin/models/dagger/phase0-dagger.zip
 ```
 
 | Politique | Poses | Distance médiane au centre |
@@ -229,7 +263,7 @@ entre trois atterrissages durs, deux sorties de zone liées à l'inclinaison
 et deux chutes à l'eau. La commande suivante reproduit ce test.
 
 ```powershell
-uv run --locked python -m rocket_quentin.evaluate --phase 1 --model players/quentin/models/phase0-dagger.zip
+uv run --locked python -m rocket_quentin.evaluate --phase 1 --model players/quentin/models/dagger/phase0-dagger.zip
 ```
 
 ### Préentraîner SAC par imitation
@@ -265,9 +299,9 @@ Depuis la racine du dépôt, collecte une seule fois, puis entraîne les trois
 modèles. Si le fichier de démonstrations existe déjà, réutilise-le.
 
 ```powershell
-uv run --locked python -m rocket_quentin.demonstrations
+uv run --locked python -m rocket_quentin.dagger.demonstrations
 foreach ($trainingSeed in 0, 1, 2) {
-    uv run --locked python -m rocket_quentin.train_imitation --epochs 30 --sac-steps 6000 --seed $trainingSeed
+    uv run --locked python -m rocket_quentin.dagger.train_imitation --epochs 30 --sac-steps 6000 --seed $trainingSeed
 }
 ```
 
@@ -294,7 +328,7 @@ Pour reprendre exactement les mêmes poids qu'un essai précédent, remplace
 `imitation-s0-EXEMPLE` par le nom du run d'origine et utilise sa graine.
 
 ```powershell
-uv run --locked python -m rocket_quentin.train_imitation --imitation-dir "players/quentin/runs/imitation-s0-EXEMPLE/imitation" --seed 0 --sac-steps 6000 --sac-anchor 100
+uv run --locked python -m rocket_quentin.dagger.train_imitation --imitation-dir "players/quentin/runs/imitation-s0-EXEMPLE/imitation" --seed 0 --sac-steps 6000 --sac-anchor 100
 ```
 
 Les trois variantes sont évaluées en déterministe sur les mêmes 40 départs de
@@ -358,7 +392,7 @@ d'imitation à reprendre et utilise sa graine pour `$trainingSeed`.
 
 ```powershell
 foreach ($initialEntropy in @("1", "0.1")) {
-    uv run --locked python -m rocket_quentin.train_imitation --imitation-dir "$imitationRun/imitation" --seed $trainingSeed --sac-steps 6000 --sac-anchor 100 --sac-initial-entropy $initialEntropy --entropy-comparison
+    uv run --locked python -m rocket_quentin.dagger.train_imitation --imitation-dir "$imitationRun/imitation" --seed $trainingSeed --sac-steps 6000 --sac-anchor 100 --sac-initial-entropy $initialEntropy --entropy-comparison
 }
 ```
 
@@ -400,7 +434,7 @@ premier en cas d'égalité. On compare ce checkpoint à l'imitation seule
 sur les 40 départs 6300 à 6339.
 
 ```powershell
-uv run --locked python -m rocket_quentin.train_dagger --imitation-dir "$imitationRun/imitation"
+uv run --locked python -m rocket_quentin.dagger.train_dagger --imitation-dir "$imitationRun/imitation"
 ```
 
 | Graine | Imitation seule | Après DAgger | Corrections ajoutées |
@@ -426,8 +460,10 @@ Pour reproduire les 100 vols officiels avec le modèle sauvegardé et son
 fichier de normalisation, lance cette commande depuis la racine du dépôt.
 
 ```powershell
-uv run --locked python -m rocket_quentin.evaluate --model players/quentin/models/phase0-dagger.zip
+uv run --locked python -m rocket_quentin.evaluate --model players/quentin/models/dagger/phase0-dagger.zip
 ```
+
+## Essais SAC historiques en phase 0
 
 ### Entraîner SAC avec le curriculum
 
@@ -437,7 +473,7 @@ les mêmes graines d'entraînement et le même budget.
 ```powershell
 foreach ($rewardMode in @("sparse", "progress")) {
     foreach ($trainingSeed in 0, 1) {
-        uv run --locked python -m rocket_quentin.train_sac --reward $rewardMode --steps 6000 --eval-every 1000 --seed $trainingSeed
+        uv run --locked python -m rocket_quentin.sac.train_sac --reward $rewardMode --steps 6000 --eval-every 1000 --seed $trainingSeed
     }
 }
 ```
@@ -492,7 +528,7 @@ entre les deux. Le seuil de promotion reste 16 poses sur 20.
 ```powershell
 foreach ($curriculumMode in @("standard", "intermediate")) {
     foreach ($trainingSeed in 0, 1, 2) {
-        uv run --locked python -m rocket_quentin.train_sac --reward progress --curriculum $curriculumMode --steps 20000 --eval-every 1000 --seed $trainingSeed
+        uv run --locked python -m rocket_quentin.sac.train_sac --reward progress --curriculum $curriculumMode --steps 20000 --eval-every 1000 --seed $trainingSeed
     }
 }
 ```
@@ -502,7 +538,7 @@ développement pour chaque dossier de run. Le rapport compte notamment
 les atterrissages durs et les sorties avec une inclinaison supérieure à 60°.
 
 ```powershell
-uv run --locked python -m rocket_quentin.evaluate --development-level 0.2 --run-dir "players/quentin/runs/sac-progress-intermediate-s0-EXEMPLE"
+uv run --locked python -m rocket_quentin.evaluate --development-level 0.2 --run-dir "players/quentin/runs/sac/p0-progress-intermediate-s0-EXEMPLE"
 ```
 
 Résultats après 20 000 décisions d'entraînement par run, sur les graines
@@ -528,7 +564,7 @@ On garde SAC, la récompense `progress`, le curriculum `intermediate` et
 
 ```powershell
 foreach ($trainingSeed in 0, 1, 2) {
-    uv run --locked python -m rocket_quentin.train_sac --reward progress --curriculum intermediate --altitude-only --probe-every 4000 --steps 20000 --eval-every 1000 --seed $trainingSeed
+    uv run --locked python -m rocket_quentin.sac.train_sac --reward progress --curriculum intermediate --altitude-only --probe-every 4000 --steps 20000 --eval-every 1000 --seed $trainingSeed
 }
 ```
 
@@ -542,7 +578,7 @@ hauteur. Sans ce drapeau, le test fait aussi varier les autres conditions de
 départ comme dans le curriculum précédent.
 
 ```powershell
-uv run --locked python -m rocket_quentin.evaluate --development-level 0.3 --altitude-only --run-dir "players/quentin/runs/sac-progress-intermediate-altitude-s0-EXEMPLE/checkpoints/step-08000"
+uv run --locked python -m rocket_quentin.evaluate --development-level 0.3 --altitude-only --run-dir "players/quentin/runs/sac/p0-progress-intermediate-altitude-s0-EXEMPLE/checkpoints/step-08000"
 ```
 
 Résultats des modèles entraînés en faisant varier uniquement l'altitude, après
@@ -574,7 +610,7 @@ La promotion continue à dépendre de 16 réussites sur 20 au palier courant.
 ```powershell
 foreach ($previousShare in @("0", "0.25")) {
     foreach ($trainingSeed in 0, 1, 2) {
-        uv run --locked python -m rocket_quentin.train_sac --reward progress --curriculum intermediate --previous-level-share $previousShare --probe-every 4000 --steps 20000 --eval-every 1000 --seed $trainingSeed
+        uv run --locked python -m rocket_quentin.sac.train_sac --reward progress --curriculum intermediate --previous-level-share $previousShare --probe-every 4000 --steps 20000 --eval-every 1000 --seed $trainingSeed
     }
 }
 ```
@@ -636,7 +672,7 @@ par graine.
 
 ```powershell
 foreach ($trainingSeed in 0, 1, 2) {
-    uv run --locked python -m rocket_quentin.train_sac --reward progress --curriculum intermediate --previous-level-share 0.25 --max-difficulty 0.2 --probe-levels 0.15 0.2 --probe-every 4000 --steps 32000 --eval-every 1000 --seed $trainingSeed
+    uv run --locked python -m rocket_quentin.sac.train_sac --reward progress --curriculum intermediate --previous-level-share 0.25 --max-difficulty 0.2 --probe-levels 0.15 0.2 --probe-every 4000 --steps 32000 --eval-every 1000 --seed $trainingSeed
 }
 ```
 
@@ -670,7 +706,7 @@ d'exemple par le chemin affiché au début de ton run.
 
 ```powershell
 uv run --locked python -m rocket_quentin.evaluate
-uv run --locked python -m rocket_quentin.evaluate --run-dir "players/quentin/runs/sac-progress-s0-EXEMPLE"
+uv run --locked python -m rocket_quentin.evaluate --run-dir "players/quentin/runs/sac/p0-progress-standard-s0-EXEMPLE"
 ```
 
 ### Essayer un épisode Gymnasium
@@ -680,7 +716,7 @@ Depuis la racine du dépôt, colle ce bloc dans PowerShell. La commande
 
 ```powershell
 @'
-from rocket_quentin.env import RocketLandingEnv
+from rocket_quentin.common.env import RocketLandingEnv
 
 env = RocketLandingEnv()
 observation, info = env.reset(seed=12)
@@ -715,7 +751,7 @@ Pour voir **le même épisode Gymnasium** en 3D, avec la graine 12 et le moteur
 coupé, lance cette commande depuis la racine du dépôt :
 
 ```powershell
-uv run --locked python -m rocket_quentin.demo_episode
+uv run --locked python -m rocket_quentin.common.demo_episode
 ```
 
 La caméra suit la descente et la fenêtre reste ouverte sur la dernière image.
@@ -728,8 +764,8 @@ Ces deux commandes partent du même scénario de développement. La fusée est
 droite, à 100 m au-dessus du centre du pont, et descend à 10 m/s.
 
 ```powershell
-uv run --locked python -m rocket_quentin.demo_episode --mode vertical
-uv run --locked python -m rocket_quentin.demo_episode --mode vertical-freefall
+uv run --locked python -m rocket_quentin.common.demo_episode --mode vertical
+uv run --locked python -m rocket_quentin.common.demo_episode --mode vertical-freefall
 ```
 
 Le pilote vise une vitesse de descente de plus en plus faible à l'approche du
@@ -745,8 +781,8 @@ PD oriente aussi la tuyère pour redresser la fusée. Il corrige l'inclinaison
 et freine la rotation pour éviter de dépasser la verticale.
 
 ```powershell
-uv run --locked python -m rocket_quentin.demo_episode --mode attitude
-uv run --locked python -m rocket_quentin.demo_episode --mode attitude-uncorrected
+uv run --locked python -m rocket_quentin.common.demo_episode --mode attitude
+uv run --locked python -m rocket_quentin.common.demo_episode --mode attitude-uncorrected
 ```
 
 ### Comparer le guidage vers le centre du pont
@@ -757,14 +793,14 @@ Le pilote latéral incline la fusée pour corriger le décalage et la vitesse.
 Le pilote précédent stabilise seulement l'orientation et la descente.
 
 ```powershell
-uv run --locked python -m rocket_quentin.demo_episode --mode lateral
-uv run --locked python -m rocket_quentin.demo_episode --mode lateral-uncorrected
+uv run --locked python -m rocket_quentin.common.demo_episode --mode lateral
+uv run --locked python -m rocket_quentin.common.demo_episode --mode lateral-uncorrected
 ```
 
 Pour rejouer un départ aléatoire de la phase 0 avec le pilote complet :
 
 ```powershell
-uv run --locked python -m rocket_quentin.demo_episode --mode pilot --seed 12
+uv run --locked python -m rocket_quentin.common.demo_episode --mode pilot --seed 12
 ```
 
 ### Voir la scène et tester le moteur
@@ -772,7 +808,7 @@ uv run --locked python -m rocket_quentin.demo_episode --mode pilot --seed 12
 Depuis la racine du dépôt, ouvre la scène MuJoCo de la phase 0 :
 
 ```powershell
-uv run --locked python -m mujoco.viewer --mjcf=players/quentin/src/rocket_quentin/assets/scene.xml
+uv run --locked python -m mujoco.viewer --mjcf=players/quentin/src/rocket_quentin/common/assets/scene.xml
 ```
 
 La fusée démarre à 15 cm du pont pour observer la gravité et les contacts. Ce départ
@@ -782,7 +818,7 @@ l'environnement Gymnasium.
 Pour voir la poussée en action, lance la démo interactive :
 
 ```powershell
-uv run --locked python -m rocket_quentin.demo_thrust
+uv run --locked python -m rocket_quentin.common.demo_thrust
 ```
 
 Dans la fenêtre, appuie sur `1` pour couper le moteur, `2` pour le vol

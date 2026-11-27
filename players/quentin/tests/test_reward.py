@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-from rocket_quentin.env import MAX_DECISIONS, RocketLandingEnv
-from rocket_quentin.reward import SAC_DISCOUNT, ProgressReward, landing_potential
+from rocket_quentin.common.env import MAX_DECISIONS, RocketLandingEnv
+from rocket_quentin.common.reward import SAC_DISCOUNT, ProgressReward, landing_potential
 
 
 def test_potential_uses_height_above_deck_and_horizontal_distance():

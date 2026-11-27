@@ -2,7 +2,7 @@
 
 import mujoco
 
-from rocket_quentin.thrust import MAX_THRUST_N
+from rocket_quentin.common.thrust import MAX_THRUST_N
 
 INITIAL_FUEL_KG = 80.0
 FUEL_OBSERVATION_INDEX = 17

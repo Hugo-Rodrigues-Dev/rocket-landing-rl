@@ -6,8 +6,8 @@ import numpy as np
 import torch
 from torch import nn
 
-from rocket_quentin.env import ACTION_SIZES, OBSERVATION_SIZES
-from rocket_quentin.fuel import MIN_THRUST_FRACTION
+from rocket_quentin.common.env import ACTION_SIZES, OBSERVATION_SIZES
+from rocket_quentin.common.fuel import MIN_THRUST_FRACTION
 
 MIN_POWERED_COMMAND = 2 * MIN_THRUST_FRACTION - 1
 

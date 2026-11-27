@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from rocket_quentin.pilot_vertical import vertical_action
+from rocket_quentin.dagger.pilot_vertical import vertical_action
 
 ORIENTATION_GAIN = 8.0
 ANGULAR_VELOCITY_GAIN = 4.5

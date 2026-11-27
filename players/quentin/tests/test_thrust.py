@@ -1,17 +1,16 @@
 from math import cos, pi, sin
-from pathlib import Path
 
 import mujoco
 import numpy as np
 import pytest
 
-from rocket_quentin.thrust import apply_thrust
+from rocket_quentin.common.env import SCENE_PATH
+from rocket_quentin.common.thrust import apply_thrust
 
 
 @pytest.fixture
 def scene():
-    xml = Path(__file__).parents[1] / "src" / "rocket_quentin" / "assets" / "scene.xml"
-    model = mujoco.MjModel.from_xml_path(str(xml))
+    model = mujoco.MjModel.from_xml_path(str(SCENE_PATH))
     return model, mujoco.MjData(model)
 
 

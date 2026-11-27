@@ -1,0 +1,12 @@
+<mujocoinclude>
+    <asset>
+        <texture type="skybox" builtin="gradient" rgb1=".30 .57 .79" rgb2=".80 .90 .96" width="256" height="256"/>
+        <texture name="water_surface" type="2d" file="water.png"/>
+        <material name="ocean" texture="water_surface" texuniform="true" texrepeat=".035 .035"
+                  specular=".12" shininess=".28" emission=".12"/>
+    </asset>
+    <visual>
+        <rgba fog=".74 .85 .92 1"/>
+        <map fogstart="6" fogend="24"/>
+    </visual>
+</mujocoinclude>

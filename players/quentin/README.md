@@ -60,9 +60,15 @@ l'inclinaison et une chute à l'eau.
 
 ```powershell
 uv run --locked python -m rocket_quentin.demo_episode --phase 4 --mode pilot --seed 12
+uv run --locked python -m rocket_quentin.demo_episode --model players/quentin/models/phase4-autonomous.pt --seed 12
 uv run --locked python -m rocket_quentin.evaluate --phase 4 --development-level 1
 uv run --locked python -m rocket_quentin.evaluate --phase 4 --model players/quentin/models/phase4-autonomous.pt
 ```
+
+Dans la démo 3D, les mesures du vent et de la barge s'affichent à gauche.
+Les mesures de la fusée, du moteur et du RCS s'affichent à droite.
+La flamme s'oriente avec la tuyère et s'allonge avec la poussée effective.
+Appuie sur `R` pour rejouer le départ.
 
 ### Phase 3 avec vagues
 
@@ -728,7 +734,7 @@ uv run --locked python -m rocket_quentin.demo_episode --mode vertical-freefall
 
 Le pilote vise une vitesse de descente de plus en plus faible à l'approche du
 pont. Si la fusée descend trop vite, il augmente la poussée. Il coupe le moteur
-au premier contact. La flèche jaune indique la poussée. À la fin, PowerShell
+au premier contact. La flamme indique la direction et l'intensité de la poussée. À la fin, PowerShell
 affiche la vitesse au contact pour comparer les deux essais.
 
 ### Comparer le redressement de la fusée
@@ -781,7 +787,7 @@ uv run --locked python -m rocket_quentin.demo_thrust
 
 Dans la fenêtre, appuie sur `1` pour couper le moteur, `2` pour le vol
 stationnaire, `3` pour la pleine poussée ou `4` pour incliner la tuyère.
-Chaque touche relance un essai de 1,4 seconde. La flèche jaune sous la tuyère
+Chaque touche relance un essai de 1,4 seconde. La flamme sous la tuyère
 indique la direction de la poussée, et sa longueur représente l'intensité.
 
 Pour vérifier la poussée et les limites de la tuyère :

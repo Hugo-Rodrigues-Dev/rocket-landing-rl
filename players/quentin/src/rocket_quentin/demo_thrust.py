@@ -5,9 +5,9 @@ from queue import Empty, SimpleQueue
 from time import perf_counter, sleep
 
 import mujoco
-import numpy as np
 from mujoco import viewer
 
+from rocket_quentin.flight_view import draw_flame
 from rocket_quentin.thrust import MAX_GIMBAL_DEG, MAX_THRUST_N, apply_thrust
 
 SCENE_PATH = Path(__file__).parent / "assets" / "scene.xml"
@@ -19,25 +19,11 @@ COMMANDS = {
 }
 
 
-def draw_thrust_arrow(scene: mujoco.MjvScene, nozzle: np.ndarray, force: np.ndarray) -> None:
-    """Trace sous la tuyère une flèche orientée comme la force."""
-    if not force.any():
-        return
-
-    arrow_type = mujoco.mjtGeom.mjGEOM_ARROW
-    arrow = scene.geoms[scene.ngeom]
-    mujoco.mjv_initGeom(arrow, arrow_type, [0, 0, 0], nozzle, np.eye(3).ravel(), [1, 0.8, 0.1, 1])
-    arrow.emission = 0.35
-    tail = nozzle - 4.0 * force / MAX_THRUST_N
-    mujoco.mjv_connector(arrow, arrow_type, 0.18, tail, nozzle)
-    scene.ngeom += 1
-
-
 def main() -> None:
     model = mujoco.MjModel.from_xml_path(str(SCENE_PATH))
     data = mujoco.MjData(model)
     rocket_id = model.body("rocket").id
-    # L'essai démarre assez haut pour que la flèche soit visible sous la fusée.
+    # L'essai démarre assez haut pour que la flamme soit visible sous la fusée.
     model.qpos0[2] += 5.0
     model.vis.headlight.ambient[:] = [0.55, 0.55, 0.55]
     frames_per_trial = 70
@@ -49,7 +35,7 @@ def main() -> None:
     thrust_n = tilt_y_deg = 0.0
 
     print("1 : moteur coupé | 2 : stationnaire | 3 : pleine poussée | 4 : tuyère inclinée", flush=True)
-    print("Chaque touche recommence l'essai. La flèche jaune représente la poussée.", flush=True)
+    print("Chaque touche recommence l'essai. La longueur de la flamme représente la poussée.", flush=True)
     with viewer.launch_passive(model, data, key_callback=keys.put, show_left_ui=False) as window:
         with window.lock():
             window.cam.lookat[:] = [0, 0, 11]
@@ -81,7 +67,9 @@ def main() -> None:
                 apply_thrust(model, data, thrust_n, tilt_y_deg=tilt_y_deg)
                 mujoco.mj_kinematics(model, data)
                 window.user_scn.ngeom = 0
-                draw_thrust_arrow(window.user_scn, data.site("nozzle").xpos, data.xfrc_applied[rocket_id, :3])
+                draw_flame(
+                    window.user_scn, data.site("nozzle").xpos, data.xfrc_applied[rocket_id, :3], data.time
+                )
 
             window.sync()
             sleep(max(0, frame_duration - (perf_counter() - frame_start)))

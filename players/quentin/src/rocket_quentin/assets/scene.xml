@@ -1,8 +1,9 @@
 <mujoco model="quentin_phase_0">
     <option timestep="0.005" gravity="0 0 -9.81"/>
+    <include file="ocean.xml"/>
 
     <worldbody>
-        <geom name="sea" type="plane" size="0 0 0.1" rgba="0.1 0.32 0.5 1"/>
+        <geom name="sea" type="plane" size="0 0 0.1" material="ocean"/>
 
         <!-- Pour une boîte, size donne les demi-dimensions. Le dessus du pont est à z = 1 m. -->
         <geom name="deck" type="box" pos="0 0 0.5" size="7.5 7.5 0.5" rgba="0.32 0.36 0.39 1"/>

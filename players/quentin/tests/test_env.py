@@ -3,7 +3,13 @@ import numpy as np
 import pytest
 from gymnasium.utils.env_checker import check_env
 
-from rocket_quentin.barge import MAX_BARGE_ACCELERATION, MAX_BARGE_SPEED
+from rocket_quentin.barge import (
+    HEAVE_AMPLITUDE,
+    HEAVE_PERIOD,
+    MAX_BARGE_ACCELERATION,
+    MAX_BARGE_SPEED,
+    TILT_AMPLITUDE,
+)
 from rocket_quentin.env import DECISION_INTERVAL, RocketLandingEnv
 from rocket_quentin.fuel import INITIAL_FUEL_KG, MIN_THRUST_N, SPECIFIC_IMPULSE_S
 from rocket_quentin.pilot_attitude import attitude_action
@@ -11,9 +17,10 @@ from rocket_quentin.pilot_lateral import lateral_action
 from rocket_quentin.pilot_vertical import vertical_action
 from rocket_quentin.pulse_throttle import PulseThrottle
 from rocket_quentin.thrust import MAX_THRUST_N
+from rocket_quentin.wind import DRAG_FACTOR, MAX_GUST_M_S, RCS_TORQUE_LIMITS, drag_force
 
 
-@pytest.mark.parametrize("phase", [0, 1, 2])
+@pytest.mark.parametrize("phase", [0, 1, 2, 3, 4])
 def test_gymnasium_api(phase):
     check_env(RocketLandingEnv(phase=phase), skip_render_check=True)
 
@@ -240,6 +247,99 @@ def test_pulse_throttle_respects_engine_limit_and_delivers_average_thrust():
     assert np.mean((commands[:, 0] + 1) / 2) == pytest.approx(0.54)
     observation[-1] = 1
     assert controller(observation)[0] == -1
+
+
+def test_phase3_waves_follow_seeded_periods_and_amplitudes():
+    env = RocketLandingEnv(phase=3)
+    first, _ = env.reset(seed=12)
+    assert first[2] == pytest.approx(RocketLandingEnv(phase=2).reset(seed=12)[0][2])
+    waves = env._waves
+    initial_position = waves.position.copy()
+    initial_velocity = waves.velocity.copy()
+    assert 6 <= 2 * np.pi / waves.frequency[1] <= 10
+    assert 6 <= 2 * np.pi / waves.frequency[2] <= 10
+    assert first[24] == pytest.approx(initial_velocity[0])
+
+    env.step([-1, 0, 0])
+    assert waves.position == pytest.approx(waves.amplitude * np.sin(waves.phase + 0.05 * waves.frequency))
+    for time in np.linspace(0, 10, 51):
+        waves.update(time)
+        assert abs(waves.position[0]) <= HEAVE_AMPLITUDE
+        assert (np.abs(waves.position[1:]) <= TILT_AMPLITUDE).all()
+    waves.update(HEAVE_PERIOD / 2)
+    assert waves.position[0] == pytest.approx(-initial_position[0])
+    assert waves.velocity[0] == pytest.approx(-initial_velocity[0])
+
+    same, _ = env.reset(seed=12)
+    assert np.array_equal(first, same)
+    env.reset(seed=13)
+    assert not np.array_equal(initial_position, waves.position)
+
+
+@pytest.mark.parametrize(
+    ("heave_speed", "roll_speed", "rocket_speed", "expected"),
+    [(0.35, 0.0, -1.8, "hard_landing"), (-0.35, 0.0, -1.8, None), (0.0, 0.05, -1.97, "hard_landing")],
+)
+def test_phase3_impact_uses_velocity_at_each_leg(heave_speed, roll_speed, rocket_speed, expected):
+    env = RocketLandingEnv(phase=3)
+    place_upright(env, [0, 0, 6.615])
+    env._waves.position[:] = 0
+    env._waves.velocity[:] = [heave_speed, roll_speed, 0]
+    env.data.joint("rocket_free").qvel[2] = rocket_speed
+    mujoco.mj_forward(env.model, env.data)
+    contacts, outcome = env._check_outcome()
+    assert contacts.all()
+    assert outcome == expected
+    if roll_speed == 0:
+        assert env._impact_speed == pytest.approx(heave_speed - rocket_speed)
+    else:
+        assert env._impact_speed > 2.0
+
+
+def test_phase3_prescribed_deck_supports_the_rocket_against_gravity():
+    env = RocketLandingEnv(phase=3)
+    place_upright(env, [0, 0, 6.615])
+    env._waves.amplitude[:] = 0
+    env._waves.update(0)
+    mujoco.mj_forward(env.model, env.data)
+    for _ in range(100):
+        contacts, outcome = env._advance(0, 0, 0)
+    assert contacts.all()
+    assert outcome == "landed"
+    rocket_dof = env.model.joint("rocket_free").dofadr[0]
+    assert env.data.qfrc_constraint[rocket_dof + 2] == pytest.approx(1080 * 9.81, rel=0.02)
+
+
+def test_phase4_wind_is_seeded_and_gust_speed_is_bounded():
+    env = RocketLandingEnv(phase=4)
+    initial, _ = env.reset(seed=12)
+    initial_mean = env._wind.mean.copy()
+    assert np.linalg.norm(initial_mean) <= 8
+    assert initial[25:27] == pytest.approx(initial_mean)
+    for _ in range(600):
+        env._wind.advance(DECISION_INTERVAL)
+        assert np.linalg.norm(env._wind.velocity[:2] - initial_mean) <= MAX_GUST_M_S + 1e-12
+    same, _ = env.reset(seed=12)
+    assert np.array_equal(initial, same)
+    different, _ = env.reset(seed=13)
+    assert not np.array_equal(initial[25:27], different[25:27])
+
+
+def test_phase4_drag_and_rcs_act_with_main_engine_off():
+    env = RocketLandingEnv(phase=4)
+    place_upright(env, [0, 0, 100])
+    env._wind.velocity[:] = [8, 0, 0]
+    env._rcs[:] = np.array(RCS_TORQUE_LIMITS) * [1, -1, 1]
+    env._advance(0, 0, 0)
+    wrench = env.data.xfrc_applied[env.model.body("rocket").id]
+    assert not env.thrust_force.any()
+    assert wrench[:3] == pytest.approx([DRAG_FACTOR * 8**2, 0, 0])
+    assert wrench[3:] == pytest.approx([1000, -1000, 100])
+    assert drag_force(np.array([0, 0, -10.0])) == pytest.approx([0, 0, DRAG_FACTOR * 100])
+
+    _, _, _, _, info = env.step([-1, 0, 0, 2, -2, 2])
+    assert env._rcs == pytest.approx([1000, -1000, 100])
+    assert info["fuel_remaining_kg"] == INITIAL_FUEL_KG
 
 
 @pytest.mark.parametrize(("action", "velocity"), [(-1, -0.4905), (0, 0.0), (1, 0.4905)])

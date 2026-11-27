@@ -17,7 +17,7 @@ def _limit_norm(vector: np.ndarray, limit: float) -> np.ndarray:
     return vector * (limit / norm) if norm > limit else vector
 
 
-def lateral_action(observation: np.ndarray) -> list[float]:
+def lateral_action(observation: np.ndarray, drag_acceleration_xy: np.ndarray | None = None) -> list[float]:
     """Vise le centre du pont, freine la dérive et commande la descente."""
     position_xy = observation[:2]
     velocity_xy = observation[3:5]
@@ -25,6 +25,8 @@ def lateral_action(observation: np.ndarray) -> list[float]:
     target_acceleration = _limit_norm(
         SPEED_GAIN_S_INV * (target_speed - velocity_xy), MAX_HORIZONTAL_ACCELERATION_M_S2
     )
+    if drag_acceleration_xy is not None:
+        target_acceleration -= drag_acceleration_xy
 
     # Pour accélérer dans le plan horizontal, le pilote incline l'axe de la poussée.
     target_up = np.array([*target_acceleration, GRAVITY_M_S2])

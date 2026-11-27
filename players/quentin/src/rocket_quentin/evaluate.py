@@ -3,6 +3,7 @@
 from argparse import ArgumentParser
 from collections import Counter
 from collections.abc import Callable
+from functools import partial
 from json import dumps
 from pathlib import Path
 
@@ -13,8 +14,11 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 from rocket_quentin.demonstrations import ENTROPY_COMPARISON_SEEDS
 from rocket_quentin.env import OBSERVATION_SIZES, RocketLandingEnv
+from rocket_quentin.learned_landing import LandingPolicy
 from rocket_quentin.pilot_lateral import lateral_action
 from rocket_quentin.pulse_throttle import PulseThrottle
+from rocket_quentin.reference import reference_action
+from rocket_quentin.wave_approach import wave_reference
 
 CONTRACT_SEEDS = range(10_000, 10_100)
 DEVELOPMENT_SEEDS = range(5_000, 5_020)
@@ -69,7 +73,7 @@ def evaluate_policy(
         "outcomes": dict(outcomes),
         "out_of_bounds_tilt": out_of_bounds_tilt,
     }
-    if phase == 2:
+    if phase >= 2:
         result["fuel_remaining_mean_kg"] = float(np.mean(fuel)) if fuel else None
     return result
 
@@ -86,13 +90,18 @@ def main() -> None:
     parser = ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group()
     source.add_argument("--run-dir", type=Path, help="dossier du modèle et de sa normalisation")
-    source.add_argument("--model", type=Path, help="modèle .zip accompagné d'un fichier .pkl du même nom")
+    source.add_argument("--model", type=Path, help="réseau .pt ou modèle .zip avec sa normalisation .pkl")
     parser.add_argument(
-        "--phase", type=int, choices=(0, 1, 2), default=0, help="0 : fixe, 1 : mobile, 2 : carburant"
+        "--phase",
+        type=int,
+        choices=range(len(OBSERVATION_SIZES)),
+        default=0,
+        help="0 : fixe, 1 : mobile, 2 : carburant, 3 : vagues, 4 : vent et RCS",
     )
     parser.add_argument(
         "--pulse-throttle", action="store_true", help="adapte la poussée au moteur de phase 2"
     )
+    parser.add_argument("--wave-approach", action="store_true", help="aligne la fusée sur le pont au toucher")
     parser.add_argument(
         "--entropy-comparison", action="store_true", help="compare sur les graines 6200 à 6239"
     )
@@ -116,8 +125,12 @@ def main() -> None:
         parser.error("--altitude-only est réservé aux mesures de développement.")
     if args.entropy_comparison and (args.phase or args.development or args.development_level is not None):
         parser.error("--entropy-comparison utilise les départs complets de phase 0.")
-    if args.pulse_throttle and args.phase != 2:
-        parser.error("--pulse-throttle nécessite --phase 2.")
+    if args.pulse_throttle and args.phase not in (2, 3):
+        parser.error("--pulse-throttle est réservé aux pilotes historiques des phases 2 et 3.")
+    if args.wave_approach and (args.phase < 3 or not args.pulse_throttle):
+        parser.error("--wave-approach nécessite la phase 3 et --pulse-throttle.")
+    if (args.model or args.run_dir) and (args.pulse_throttle or args.wave_approach):
+        parser.error("Les options du pilote de référence sont réservées aux essais sans modèle.")
 
     def report(policy):
         controller = PulseThrottle(policy) if args.pulse_throttle else None
@@ -140,8 +153,24 @@ def main() -> None:
         return evaluate_policy(policy, CONTRACT_SEEDS, **options)
 
     if args.run_dir is None and args.model is None:
-        print(dumps(report(lateral_action), indent=2))
+        if args.wave_approach:
+            policy = wave_reference
+        elif args.pulse_throttle:
+            policy = lateral_action
+        else:
+            policy = partial(reference_action, phase=args.phase)
+        print(dumps(report(policy), indent=2))
         return
+
+    torch.set_num_threads(1)
+    if args.model and args.model.suffix == ".pt":
+        policy = LandingPolicy.load(args.model)
+        if policy.phase != args.phase:
+            parser.error("Le réseau doit être évalué dans sa phase d'entraînement.")
+        print(dumps(report(policy.action), indent=2))
+        return
+    if args.phase == 4:
+        parser.error("La phase 4 nécessite un réseau .pt qui produit aussi les commandes RCS.")
 
     if args.model:
         model_path = args.model
@@ -149,7 +178,6 @@ def main() -> None:
     else:
         model_path = args.run_dir / "model.zip"
         normalizer_path = args.run_dir / "vec_normalize.pkl"
-    torch.set_num_threads(1)
     model = SAC.load(model_path, device="cpu")
     observation_size = model.observation_space.shape[0]
     if observation_size not in OBSERVATION_SIZES[: args.phase + 1]:

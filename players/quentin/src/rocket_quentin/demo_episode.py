@@ -1,6 +1,7 @@
 """Rejoue en 3D un épisode Gymnasium."""
 
 from argparse import ArgumentParser
+from functools import partial
 from threading import Event
 from time import perf_counter, sleep
 
@@ -9,11 +10,13 @@ import numpy as np
 from mujoco import viewer
 
 from rocket_quentin.demo_thrust import draw_thrust_arrow
-from rocket_quentin.env import DECISION_INTERVAL, RocketLandingEnv
+from rocket_quentin.env import DECISION_INTERVAL, OBSERVATION_SIZES, RocketLandingEnv
 from rocket_quentin.pilot_attitude import attitude_action
 from rocket_quentin.pilot_lateral import lateral_action
 from rocket_quentin.pilot_vertical import vertical_action
 from rocket_quentin.pulse_throttle import PulseThrottle
+from rocket_quentin.reference import reference_action
+from rocket_quentin.wave_approach import wave_reference
 
 
 def frame_episode(camera: mujoco.MjvCamera, rocket_position: np.ndarray, deck_position: np.ndarray) -> None:
@@ -26,11 +29,16 @@ def frame_episode(camera: mujoco.MjvCamera, rocket_position: np.ndarray, deck_po
 def main() -> None:
     parser = ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--phase", type=int, choices=(0, 1, 2), default=0, help="0 : fixe, 1 : mobile, 2 : carburant"
+        "--phase",
+        type=int,
+        choices=range(len(OBSERVATION_SIZES)),
+        default=0,
+        help="0 : fixe, 1 : mobile, 2 : carburant, 3 : vagues, 4 : vent et RCS",
     )
     parser.add_argument(
         "--pulse-throttle", action="store_true", help="adapte la poussée au moteur de phase 2"
     )
+    parser.add_argument("--wave-approach", action="store_true", help="aligne la fusée sur le pont au toucher")
     parser.add_argument("--seed", type=int, default=12, help="graine de départ (par défaut : 12)")
     parser.add_argument(
         "--mode",
@@ -48,9 +56,14 @@ def main() -> None:
         help="départ du contrat, essai vertical, départ incliné ou départ décalé",
     )
     args = parser.parse_args()
-    if args.pulse_throttle and (args.phase != 2 or args.mode == "freefall"):
-        parser.error("--pulse-throttle nécessite la phase 2 et un mode de pilotage.")
+    if args.pulse_throttle and (args.phase not in (2, 3) or args.mode == "freefall"):
+        parser.error("--pulse-throttle nécessite la phase 2 ou 3 et un mode de pilotage.")
+    if args.phase == 4 and args.mode not in ("pilot", "freefall"):
+        parser.error("La phase 4 est disponible avec --mode pilot ou --mode freefall.")
+    if args.wave_approach and (args.phase < 3 or not args.pulse_throttle or args.mode != "pilot"):
+        parser.error("--wave-approach nécessite la phase 3, --mode pilot et --pulse-throttle.")
     env = RocketLandingEnv(phase=args.phase)
+    freefall_action = [-1.0] + [0.0] * (env.action_space.shape[0] - 1)
     options = {"vertical_demo": True} if args.mode not in ("freefall", "pilot") else None
     if args.mode in ("attitude", "attitude-uncorrected"):
         options = {"vertical_demo": True, "initial_pitch_deg": 5.0}
@@ -68,6 +81,10 @@ def main() -> None:
         "lateral-uncorrected": attitude_action,
         "pilot": lateral_action,
     }.get(args.mode)
+    if args.phase >= 2 and args.mode == "pilot" and not args.pulse_throttle:
+        policy = partial(reference_action, phase=args.phase)
+    if args.wave_approach:
+        policy = wave_reference
     if args.pulse_throttle:
         policy = PulseThrottle(policy)
     observation, _ = env.reset(seed=args.seed, options=options)
@@ -75,7 +92,7 @@ def main() -> None:
     deck_position = env.data.geom("deck").xpos
     rocket_position = env.data.body("rocket").xpos
     nozzle_position = env.data.site("nozzle").xpos
-    force = env.data.xfrc_applied[env.model.body("rocket").id, :3]
+    force = env.thrust_force
     restart = Event()
 
     def on_key(key: int) -> None:
@@ -102,7 +119,7 @@ def main() -> None:
                             policy.reset()
                         finished = False
                     if not finished:
-                        action = policy(observation) if policy is not None else [-1, 0, 0]
+                        action = policy(observation) if policy is not None else freefall_action
                         observation, reward, terminated, truncated, info = env.step(action)
                         frame_episode(window.cam, rocket_position, deck_position)
                         window.user_scn.ngeom = 0

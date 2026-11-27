@@ -8,7 +8,9 @@ Environnement et agents de Quentin. Voir le [contrat](../../CONTRACT.md) pour le
 |---|---|---|---|---|---|---|
 | 0 | Oui | 96/100 | 0,21 m | 0,85 m/s | — | Imitation supervisée, DAgger |
 | 1 | Oui | 93/100 | 0,84 m | 1,02 m/s | — | Transfert du modèle DAgger de phase 0 |
-| 2 | Oui | 94/100 | 0,85 m | 1,07 m/s | 37,41 kg | Transfert du modèle DAgger avec commande pulsée |
+| 2 | Oui | 96/100 | 0,81 m | 0,68 m/s | 37,33 kg | Imitation et DAgger, réseau de phase 2 |
+| 3 | Oui | 88/100 | 0,76 m | 0,80 m/s | 37,99 kg | Imitation et DAgger, réseau de phase 3 |
+| 4 | Oui | 89/100 | 1,10 m | 0,73 m/s | 40,28 kg | Imitation et DAgger, réseau de phase 4 |
 
 Pilote programmé à la main, utilisé comme référence en phase 0 sur les 100
 graines 10 000 à 10 099. Il a réussi les 100 atterrissages, avec un écart
@@ -16,6 +18,77 @@ médian de 0,16 m au centre, une vitesse verticale moyenne de 0,77 m/s vers
 le bas et une inclinaison moyenne de 0,65° au premier contact.
 
 ## Lancer
+
+### Phase 4 avec vent et RCS
+
+`RocketLandingEnv(phase=4)` ajoute un vent horizontal moyen tiré entre
+0 et 8 m/s et un vecteur de rafale corrélé dans le temps, de norme bornée
+à 3 m/s. La traînée est appliquée au centre de masse, à l'opposé de la
+vitesse de la fusée par rapport à l'air. Le réseau observe les deux
+composantes du vent actuel.
+
+Les actions contiennent les trois commandes du moteur principal suivies
+des trois commandes du RCS. Les axes transverses x et y de la fusée
+permettent d'appliquer jusqu'à ±1 000 N·m. L'axe longitudinal z permet
+jusqu'à ±100 N·m. Le RCS fonctionne aussi lorsque le moteur principal
+est coupé. Le contrat ne spécifie pas sa consommation et les 80 kg
+modélisés alimentent le moteur principal.
+
+Le pilote de référence utilise le vent mesuré pour corriger sa
+trajectoire latérale. Il utilise le RCS pour amortir les rotations et
+s'aligner avec le pont à l'approche du contact. Cette adaptation produit
+les démonstrations de phase 4. En évaluation, un réseau prend chacune
+des six décisions de commande.
+
+| Politique sur les graines 5100 à 5119 | Poses | Distance médiane au centre |
+|---|---:|---:|
+| Agent de phase 3 transféré avec RCS à zéro | 19/20 | 0,77 m |
+| Pilote de phase 3 avec RCS à zéro | 20/20 | 0,78 m |
+| Pilote adapté au vent et au RCS | 20/20 | 0,79 m |
+
+Sur les 100 départs officiels, le réseau de phase 3 transféré atteint
+87 poses, avec 12 sorties de zone et un dépassement de temps. Ce transfert
+conserve ses 29 entrées et laisse les trois commandes du RCS à zéro. Le
+pilote adapté réussit 151 des 160 vols de collecte en phase 4.
+
+Le réseau de phase 4 obtient **89 poses sur 100** au test officiel,
+pour un seuil de 75. La distance médiane au centre est de 1,10 m,
+la vitesse verticale relative moyenne au premier contact de 0,73 m/s
+et l'inclinaison moyenne de 3,05°. Il reste en moyenne 40,28 kg sur
+les poses réussies. Les échecs sont dix sorties de zone dues à
+l'inclinaison et une chute à l'eau.
+
+```powershell
+uv run --locked python -m rocket_quentin.demo_episode --phase 4 --mode pilot --seed 12
+uv run --locked python -m rocket_quentin.evaluate --phase 4 --development-level 1
+uv run --locked python -m rocket_quentin.evaluate --phase 4 --model players/quentin/models/phase4-autonomous.pt
+```
+
+### Phase 3 avec vagues
+
+Le pont de `RocketLandingEnv(phase=3)` se déplace toujours horizontalement.
+Il oscille aussi de ±0,5 m en hauteur, sur une période de 8 s, et de ±3°
+en roulis et tangage, avec deux périodes tirées entre 6 et 10 s. Les
+trois oscillations démarrent à des phases tirées à chaque épisode.
+Les glissières et les charnières transmettent le mouvement du pont aux
+contacts dans MuJoCo. Les efforts qui maintiennent la trajectoire
+prescrite compensent notamment le poids de la barge.
+
+On mesure la hauteur des jambes au-dessus du plan incliné du pont.
+Lorsqu'une jambe touche, le test d'atterrissage dur utilise la vitesse
+verticale relative à ce point du pont, qui varie avec sa translation et
+sa rotation. L'observation ajoute la normale du pont, sa vitesse de
+rotation et sa vitesse verticale actuelles aux mesures de phase 2.
+
+Pour la collecte, le pilote de référence vise la normale du pont sous
+1,5 m, tient compte de sa vitesse de rotation et ralentit au toucher.
+Ce comportement fournit des exemples de commande au réseau.
+L'évaluation de l'agent utilise le réseau seul pendant tout le vol.
+
+```powershell
+uv run --locked python -m rocket_quentin.evaluate --phase 3 --development-level 1
+uv run --locked python -m rocket_quentin.evaluate --phase 3 --model players/quentin/models/phase3-autonomous.pt
+```
 
 ### Phase 2 avec carburant
 
@@ -28,39 +101,83 @@ quand le réservoir se vide, y compris au milieu d'un pas physique.
 L'observation ajoute le carburant restant en kilogrammes avant les quatre
 indicateurs de contact.
 
-La commande pulsée réutilise les poids de DAgger appris en phase 0. Elle
-ajuste la poussée demandée selon la masse estimée d'après le carburant
-restant. Si la demande est inférieure à 60 %, elle alterne moteur coupé
-et poussée à 60 % selon l'écart accumulé entre la demande et la poussée
-livrée. Chaque commande dure un pas de décision de 50 ms, avec une coupure
-possible en cas d'épuisement du carburant. Les angles de tuyère viennent
-du pilote ou du réseau. Au premier contact, la commande pulsée coupe le
-moteur.
-
-Les trois variantes ont été comparées sur les mêmes 20 départs de
-développement complets (graines 5100 à 5119).
-
-| Politique | Poses | Distance médiane au centre | Carburant moyen sur les réussites |
-|---|---:|---:|---:|
-| DAgger phase 0, commande directe | 2/20 | 0,76 m | 45,59 kg |
-| Pilote de référence avec commande pulsée | 20/20 | 0,62 m | 36,07 kg |
-| DAgger phase 0 avec commande pulsée | 20/20 | 1,00 m | 36,05 kg |
-
-Le modèle adapté atteint **94 poses sur 100** sur les graines officielles,
-pour un seuil de 85. La distance médiane au centre est de 0,85 m, la
-vitesse verticale relative moyenne au premier contact de 1,07 m/s et
-l'inclinaison moyenne au contact de 3,42°. Il reste en moyenne 37,41 kg
-de carburant sur les poses réussies. Les six échecs sont deux sorties
-de zone dues à l'inclinaison, deux atterrissages durs et deux chutes à l'eau.
-
-Depuis la racine du dépôt, la première commande ouvre la scène avec le
-pilote de référence. La seconde évalue le modèle adapté sur les graines
-officielles 10 000 à 10 099.
+Le pilote de référence combine la vitesse verticale observée, la hauteur et
+la masse de la fusée pour choisir quand allumer le moteur. Les essais
+historiques avec adaptation des commandes ont obtenu 94/100 en phase 2
+et 92/100 en phase 3. Le bilan de validation retient les essais où le
+réseau produit toutes les commandes du début à la fin de l'épisode.
 
 ```powershell
-uv run --locked python -m rocket_quentin.demo_episode --phase 2 --mode pilot --pulse-throttle --seed 12
-uv run --locked python -m rocket_quentin.evaluate --phase 2 --pulse-throttle --model players/quentin/models/phase0-dagger.zip
+uv run --locked python -m rocket_quentin.evaluate --phase 2 --development-level 1
+uv run --locked python -m rocket_quentin.evaluate --phase 2 --model players/quentin/models/phase2-autonomous.pt
 ```
+
+### Entraîner les agents autonomes à partir de la phase 2
+
+Le pilote de référence fournit les commandes sur 160 départs de collecte
+(graines 4000 à 4159). On conserve les vols réussis pour l'imitation
+initiale. Ensuite, DAgger laisse le réseau piloter sur de nouveaux départs
+et ajoute les commandes que le pilote aurait choisies dans les états
+rencontrés par le réseau. Chaque phase possède son propre réseau. À chaque
+pas, jusqu'à la fin du vol, le modèle choisit l'allumage, la poussée et
+les deux angles. Sur les 160 vols, le pilote en réussit 157 en phase 2
+et 147 en phase 3. Il atteint aussi 20/20 dans chaque phase sur les
+départs de développement 5100 à 5119.
+
+```powershell
+foreach ($phase in 2, 3, 4) {
+    uv run --locked python -m rocket_quentin.phase_demonstrations --phase $phase
+    foreach ($trainingSeed in 0, 1, 2) {
+        uv run --locked python -m rocket_quentin.train_landing --phase $phase --seed $trainingSeed
+    }
+}
+```
+
+Le réseau utilise trois couches de 128 neurones et enregistre sa
+normalisation avec les poids dans un fichier `.pt`. On effectue 35
+époques d'imitation, puis trois tours de 15 époques, chacun avec
+32 départs de correction. Les trois validations intermédiaires et
+la validation initiale utilisent les graines 6700 à 6719.
+
+| Phase | Graine d'entraînement | Imitation | DAgger 1 | DAgger 2 | DAgger 3 |
+|---|---:|---:|---:|---:|---:|
+| 2 | 0 | 18/20 | 20/20 | 20/20 | 20/20 |
+| 2 | 1 | 18/20 | 20/20 | 20/20 | 20/20 |
+| 2 | 2 | 14/20 | 20/20 | 20/20 | 20/20 |
+| 3 | 0 | 7/20 | 15/20 | 18/20 | 20/20 |
+| 3 | 1 | 11/20 | 12/20 | 19/20 | 20/20 |
+| 3 | 2 | 8/20 | 11/20 | 17/20 | 19/20 |
+| 4 | 0 | 10/20 | 15/20 | 20/20 | 20/20 |
+| 4 | 1 | 11/20 | 17/20 | 19/20 | 20/20 |
+| 4 | 2 | 14/20 | 18/20 | 20/20 | 19/20 |
+
+En phase 2, les trois graines atteignent 20/20 dès le premier tour.
+Le test officiel utilise la plus petite distance médiane à ce tour
+(graine 1). Il donne 96/100, avec deux sorties de zone dues à
+l'inclinaison et deux délais dépassés. L'inclinaison moyenne au
+premier contact est de 3,08°.
+
+En phase 3, les trois graines dépassent le seuil de développement de
+16/20 au deuxième tour. Les trois modèles de ce tour ont ensuite été
+comparés sur les graines 6800 à 6839. Les graines d'entraînement 0, 1
+et 2 obtiennent respectivement 38/40, 35/40 et 37/40. Le test officiel
+utilise donc la graine 0 et le checkpoint du deuxième tour.
+Il donne 88/100, avec douze sorties de zone dues à l'inclinaison.
+L'inclinaison moyenne au premier contact est de 2,83°.
+
+En phase 4, on compare les trois modèles du deuxième tour sur les
+graines 6900 à 6939. Les graines d'entraînement 0, 1 et 2 obtiennent
+37/40, 37/40 et 36/40. Le test officiel utilise la graine 1,
+dont la distance médiane au centre est de 0,99 m contre 1,21 m pour
+l'autre modèle à 37/40.
+
+Sur ces 40 départs, le même réseau obtient 35/40 lorsque ses sorties RCS
+sont forcées à zéro, contre 37/40 avec ses propres commandes. Il sollicite
+les trois axes du RCS. Ce comparatif porte sur ce réseau et ces départs.
+
+Après l'ajout de la phase 4, les réseaux des phases 0 à 3 ont été
+réévalués sur les 100 graines officielles. Ils reproduisent leurs
+scores de 96, 93, 96 et 88 poses.
 
 ### Phase 1 sur barge mobile
 

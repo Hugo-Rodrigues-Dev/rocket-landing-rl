@@ -4,7 +4,7 @@ from collections.abc import Callable
 
 import numpy as np
 
-from rocket_quentin.fuel import MIN_THRUST_FRACTION
+from rocket_quentin.fuel import FUEL_OBSERVATION_INDEX, MIN_THRUST_FRACTION
 
 DRY_MASS_KG = 1000.0
 
@@ -19,7 +19,7 @@ class PulseThrottle:
 
     def __call__(self, observation: np.ndarray) -> list[float]:
         throttle, tilt_x, tilt_y = self.policy(observation)
-        mass_ratio = 1 + float(observation[-5]) / DRY_MASS_KG
+        mass_ratio = 1 + float(observation[FUEL_OBSERVATION_INDEX]) / DRY_MASS_KG
         requested = float(np.clip(0.5 * (throttle + 1) * mass_ratio, 0, 1))
         if requested == 0 or observation[-4:].any():
             self.reset()

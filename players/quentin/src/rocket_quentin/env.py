@@ -10,13 +10,16 @@ import numpy as np
 from rocket_quentin.barge import BargeMotion
 from rocket_quentin.fuel import FuelSystem
 from rocket_quentin.thrust import MAX_GIMBAL_DEG, MAX_THRUST_N, apply_thrust
+from rocket_quentin.wind import RCS_TORQUE_LIMITS, Wind, drag_force
 
 SCENE_PATH = Path(__file__).parent / "assets" / "scene.xml"
 MOVING_SCENE_PATH = SCENE_PATH.with_name("scene_phase1.xml")
+WAVES_SCENE_PATH = SCENE_PATH.with_name("scene_phase3.xml")
 DECISION_INTERVAL = 0.05
 MAX_DECISIONS = 600
 MAX_FLIGHT_TILT_DEG = 60.0
-OBSERVATION_SIZES = (19, 21, 22)
+OBSERVATION_SIZES = (19, 21, 22, 29, 31)
+ACTION_SIZES = (3, 3, 3, 3, 6)
 LEG_NAMES = ("leg_ne", "leg_nw", "leg_se", "leg_sw")
 CURRICULUM_POWER = 3
 EASY_START = {
@@ -29,18 +32,24 @@ EASY_START = {
 
 
 class RocketLandingEnv(gym.Env):
-    """Observations en unités SI et trois commandes continues dans [-1, 1]."""
+    """Observations en unités SI et commandes continues dans [-1, 1]."""
 
     def __init__(self, start_difficulty: float = 1.0, *, altitude_only: bool = False, phase: int = 0):
-        if phase not in (0, 1, 2):
-            raise ValueError("Les phases disponibles sont 0, 1 et 2.")
+        if phase not in range(len(OBSERVATION_SIZES)):
+            raise ValueError("Les phases disponibles vont de 0 à 4.")
         self.set_start_difficulty(start_difficulty)
         self.altitude_only = altitude_only
-        self.model = mujoco.MjModel.from_xml_path(str(MOVING_SCENE_PATH if phase >= 1 else SCENE_PATH))
+        scene = (SCENE_PATH, MOVING_SCENE_PATH, MOVING_SCENE_PATH, WAVES_SCENE_PATH, WAVES_SCENE_PATH)[phase]
+        self.model = mujoco.MjModel.from_xml_path(str(scene))
         self.data = mujoco.MjData(self.model)
-        self._barge = BargeMotion(self.model, self.data) if phase >= 1 else None
-        self._fuel = FuelSystem(self.model) if phase == 2 else None
-        self.action_space = gym.spaces.Box(-1.0, 1.0, shape=(3,), dtype=np.float32)
+        self._barge = BargeMotion(self.model, self.data, waves=phase >= 3) if phase >= 1 else None
+        self._waves = self._barge.waves if self._barge is not None else None
+        self._fuel = FuelSystem(self.model) if phase >= 2 else None
+        self.phase = phase
+        self._wind = None
+        self._rcs = np.zeros(3)
+        self.thrust_force = np.zeros(3)
+        self.action_space = gym.spaces.Box(-1.0, 1.0, shape=(ACTION_SIZES[phase],), dtype=np.float32)
         self.observation_space = gym.spaces.Box(
             -np.inf, np.inf, shape=(OBSERVATION_SIZES[phase],), dtype=np.float32
         )
@@ -51,7 +60,10 @@ class RocketLandingEnv(gym.Env):
         self._hull_id = self.model.geom("hull").id
         self._sea_id = self.model.geom("sea").id
         deck = self.model.geom("deck")
-        self._deck_position = self.data.geom("deck").xpos
+        self._deck_geom = self.data.geom("deck")
+        self._deck_position = (
+            self.data.body("barge").xpos if self._waves is not None else self._deck_geom.xpos
+        )
         self._deck_id = deck.id
         self._deck_height = float(deck.pos[2] + deck.size[2])
         self._deck_half_size = deck.size[:2].copy()
@@ -67,6 +79,7 @@ class RocketLandingEnv(gym.Env):
         if self._fuel is not None:
             self._fuel.reset()
         mujoco.mj_resetData(self.model, self.data)
+        self.thrust_force.fill(0)
         if self._barge is not None:
             self._barge.reset()
         self._decisions = 0
@@ -86,6 +99,12 @@ class RocketLandingEnv(gym.Env):
             altitude = 100.0
         else:
             altitude = self._sample_start()
+        if self._waves is not None:
+            self._waves.reset(self.np_random)
+        if self.phase == 4:
+            # Le vent possède son propre flux aléatoire, sans déplacer les tirages de la barge.
+            self._wind = Wind(self.np_random.spawn(1)[0])
+            self._rcs.fill(0)
         mujoco.mj_kinematics(self.model, self.data)
         self._joint.qpos[2] += altitude - self._altitude()
         mujoco.mj_forward(self.model, self.data)
@@ -140,9 +159,14 @@ class RocketLandingEnv(gym.Env):
         if self._needs_reset:
             raise gym.error.ResetNeeded("Appelle reset() avant de commencer un épisode.")
         action = np.asarray(action, dtype=np.float64)
-        if action.shape != (3,) or not np.isfinite(action).all():
-            raise ValueError("Une action doit contenir trois nombres finis.")
-        throttle, tilt_x, tilt_y = np.clip(action, -1, 1)
+        if action.shape != self.action_space.shape or not np.isfinite(action).all():
+            raise ValueError(
+                f"Une action de phase {self.phase} doit contenir {ACTION_SIZES[self.phase]} nombres finis."
+            )
+        action = np.clip(action, -1, 1)
+        throttle, tilt_x, tilt_y = action[:3]
+        if self._wind is not None:
+            self._rcs[:] = action[3:] * RCS_TORQUE_LIMITS
         thrust = (throttle + 1) * MAX_THRUST_N / 2
         self._decisions += 1
         if self._barge is not None:
@@ -152,6 +176,8 @@ class RocketLandingEnv(gym.Env):
             contacts, outcome = self._physics_step(thrust, tilt_x * MAX_GIMBAL_DEG, tilt_y * MAX_GIMBAL_DEG)
             if outcome is not None:
                 break
+        if self._wind is not None:
+            self._wind.advance(DECISION_INTERVAL)
 
         terminated = outcome is not None
         truncated = not terminated and self._decisions >= MAX_DECISIONS
@@ -196,6 +222,11 @@ class RocketLandingEnv(gym.Env):
 
     def _advance(self, thrust: float, tilt_x: float, tilt_y: float):
         apply_thrust(self.model, self.data, thrust, tilt_x, tilt_y)
+        wrench = self.data.xfrc_applied[self._rocket.id]
+        self.thrust_force[:] = wrench[:3]
+        if self._wind is not None:
+            wrench[:3] += drag_force(self._joint.qvel[:3] - self._wind.velocity)
+            wrench[3:] += self._rocket.xmat.reshape(3, 3) @ self._rcs
         if self._barge is None:
             mujoco.mj_step(self.model, self.data)
         else:
@@ -211,10 +242,20 @@ class RocketLandingEnv(gym.Env):
 
     def _altitude(self):
         # Le bas d'une capsule est son centre moins sa demi-longueur projetée et son rayon.
+        radii, half_lengths = self.model.geom_size[self._legs, :2].T
+        if self._waves is not None:
+            normal = self._deck_geom.xmat.reshape(3, 3)[:, 2]
+            centers = (self.data.geom_xpos[self._legs] - self._deck_position) @ normal
+            axes = self.data.geom_xmat[self._legs].reshape(-1, 3, 3)[:, :, 2]
+            return float(np.min(centers - np.abs(axes @ normal) * half_lengths - radii) / normal[2])
         centers = self.data.geom_xpos[self._legs, 2]
         axis_z = self.data.geom_xmat[self._legs, 8]
-        radii, half_lengths = self.model.geom_size[self._legs, :2].T
         return float(np.min(centers - np.abs(axis_z) * half_lengths - radii) - self._deck_height)
+
+    def _deck_motion(self) -> tuple[np.ndarray, np.ndarray]:
+        motion = np.empty(6)
+        mujoco.mj_objectVelocity(self.model, self.data, mujoco.mjtObj.mjOBJ_GEOM, self._deck_id, motion, 0)
+        return motion[:3], motion[3:]
 
     def _observation(self, contacts):
         rotation = self._rocket.xmat.reshape(3, 3)
@@ -226,6 +267,14 @@ class RocketLandingEnv(gym.Env):
             values.append(self._barge.velocity)
         if self._fuel is not None:
             values.append([self._fuel.remaining_kg])
+        if self._waves is not None:
+            normal = self._deck_geom.xmat.reshape(3, 3)[:, 2]
+            angular, _ = self._deck_motion()
+            # Vitesse verticale du pont à l'aplomb de la fusée.
+            velocity[2] -= self._waves.velocity[0] + angular[0] * position[1] - angular[1] * position[0]
+            values.extend((normal, angular, self._waves.velocity[:1]))
+        if self._wind is not None:
+            values.append(self._wind.velocity[:2])
         return np.concatenate((*values, contacts)).astype(np.float32)
 
     def _check_outcome(self):
@@ -234,6 +283,9 @@ class RocketLandingEnv(gym.Env):
         tilt = float(np.degrees(np.arccos(np.clip(rotation[2, 2], -1, 1))))
         velocity = self._joint.qvel[:3]
         angular_velocity = self._joint.qvel[3:]
+        deck_rotation = self._deck_geom.xmat.reshape(3, 3)
+        normal = deck_rotation[:, 2]
+        deck_angular, deck_linear = self._deck_motion() if self._waves is not None else (None, None)
         crash = False
         impact_speeds = []
         for contact in self.data.contact:
@@ -241,16 +293,18 @@ class RocketLandingEnv(gym.Env):
             pair = (first, second)
             if self._hull_id in pair and (self._deck_id in pair or self._sea_id in pair):
                 crash = True
-            if self._deck_id not in pair or abs(contact.frame[2]) <= 0.5:
+            if self._deck_id not in pair or abs(contact.frame[:3] @ normal) <= 0.5:
                 continue
             leg = second if first == self._deck_id else first
-            if leg not in self._legs or contact.pos[2] < self._deck_height - 0.5:
+            if leg not in self._legs or (contact.pos - self._deck_geom.xpos) @ normal < 0:
                 continue
             index = self._legs.index(leg)
             contacts[index] = True
             if not self._contacts[index]:
                 lever = contact.pos - self._rocket.xpos
                 point_velocity = velocity + np.cross(rotation @ angular_velocity, lever)
+                if deck_angular is not None:
+                    point_velocity -= deck_linear + np.cross(deck_angular, contact.pos - self._deck_geom.xpos)
                 impact_speeds.append(float(-point_velocity[2]))
 
         self._contacts = contacts
@@ -261,16 +315,25 @@ class RocketLandingEnv(gym.Env):
             return contacts, "crash"
         if max(impact_speeds, default=0.0) > 2.0:
             return contacts, "hard_landing"
-        if contacts.all() and np.linalg.norm(angular_velocity) < 0.1:
+        if contacts.all():
             relative_velocity = velocity.copy()
-            if self._barge is not None:
+            relative_angular = angular_velocity
+            if deck_angular is not None:
+                relative_velocity -= deck_linear + np.cross(
+                    deck_angular, self._rocket.xpos - self._deck_geom.xpos
+                )
+                relative_angular = rotation @ angular_velocity - deck_angular
+            elif self._barge is not None:
                 relative_velocity[:2] -= self._barge.velocity
-            if np.linalg.norm(relative_velocity) < 0.2:
+            if np.linalg.norm(relative_velocity) < 0.2 and np.linalg.norm(relative_angular) < 0.1:
                 return contacts, "landed"
         base = self.data.site("nozzle").xpos
-        if base[2] < self._deck_height and np.any(
-            np.abs(base[:2] - self._deck_position[:2]) > self._deck_half_size
-        ):
+        if self._waves is not None:
+            base_relative = deck_rotation.T @ (base - self._deck_position)
+            below, offset = base_relative[2] < 0, base_relative[:2]
+        else:
+            below, offset = base[2] < self._deck_height, base[:2] - self._deck_position[:2]
+        if below and np.any(np.abs(offset) > self._deck_half_size):
             return contacts, "water"
         radius = np.linalg.norm(self._joint.qpos[:2] - self._deck_position[:2])
         if radius > 100 or self._altitude() > 200 or tilt > MAX_FLIGHT_TILT_DEG:

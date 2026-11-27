@@ -11,6 +11,7 @@ import torch
 from stable_baselines3 import SAC
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
+from rocket_quentin.demonstrations import ENTROPY_COMPARISON_SEEDS
 from rocket_quentin.env import RocketLandingEnv
 from rocket_quentin.pilot_lateral import lateral_action
 
@@ -66,7 +67,12 @@ def sac_policy(model: SAC, normalizer: VecNormalize) -> Callable:
 
 def main() -> None:
     parser = ArgumentParser(description=__doc__)
-    parser.add_argument("--run-dir", type=Path, help="dossier du modèle SAC et de sa normalisation")
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument("--run-dir", type=Path, help="dossier du modèle et de sa normalisation")
+    source.add_argument("--model", type=Path, help="modèle .zip accompagné d'un fichier .pkl du même nom")
+    parser.add_argument(
+        "--entropy-comparison", action="store_true", help="compare sur les graines 6200 à 6239"
+    )
     parser.add_argument(
         "--development",
         action="store_true",
@@ -85,8 +91,12 @@ def main() -> None:
         parser.error("--development-level doit être compris entre 0 et 1.")
     if args.altitude_only and not (args.development or args.development_level is not None):
         parser.error("--altitude-only est réservé aux mesures de développement.")
+    if args.entropy_comparison and (args.development or args.development_level is not None):
+        parser.error("--entropy-comparison utilise les départs complets de phase 0.")
 
     def report(policy):
+        if args.entropy_comparison:
+            return evaluate_policy(policy, ENTROPY_COMPARISON_SEEDS)
         if args.development_level is not None:
             return evaluate_policy(
                 policy, COMPARISON_SEEDS, args.development_level, altitude_only=args.altitude_only
@@ -100,15 +110,21 @@ def main() -> None:
             }
         return evaluate_policy(policy, CONTRACT_SEEDS)
 
-    if args.run_dir is None:
+    if args.run_dir is None and args.model is None:
         print(dumps(report(lateral_action), indent=2))
         return
 
+    if args.model:
+        model_path = args.model
+        normalizer_path = model_path.with_suffix(".pkl")
+    else:
+        model_path = args.run_dir / "model.zip"
+        normalizer_path = args.run_dir / "vec_normalize.pkl"
     torch.set_num_threads(1)
-    normalizer = VecNormalize.load(args.run_dir / "vec_normalize.pkl", DummyVecEnv([RocketLandingEnv]))
+    normalizer = VecNormalize.load(normalizer_path, DummyVecEnv([RocketLandingEnv]))
     normalizer.training = False
     try:
-        model = SAC.load(args.run_dir / "model.zip", device="cpu")
+        model = SAC.load(model_path, device="cpu")
         print(dumps(report(sac_policy(model, normalizer)), indent=2))
     finally:
         normalizer.close()

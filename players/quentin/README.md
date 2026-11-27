@@ -6,7 +6,7 @@ Environnement et agents de Quentin. Voir le [contrat](../../CONTRACT.md) pour le
 
 | Phase | Validée | Taux de réussite | Précision (médiane) | Vitesse au contact | Algorithme |
 |---|---|---|---|---|---|
-| 0 | | | | | |
+| 0 | Oui | 96/100 | 0,21 m | 0,85 m/s | Imitation supervisée, DAgger |
 
 Pilote programmé à la main, utilisé comme référence en phase 0 sur les 100
 graines 10 000 à 10 099. Il a réussi les 100 atterrissages, avec un écart
@@ -14,6 +14,203 @@ médian de 0,16 m au centre, une vitesse verticale moyenne de 0,77 m/s vers
 le bas et une inclinaison moyenne de 0,65° au premier contact.
 
 ## Lancer
+
+### Préentraîner SAC par imitation
+
+Dans les essais précédents, SAC devait découvrir par exploration des poses
+réussies à des hauteurs bien inférieures aux 80 à 120 m de la phase 0.
+Le pilote de référence sait déjà effectuer un vol complet. On enregistre ses
+observations et ses commandes pour donner au réseau une politique de départ.
+Cette approche s'appelle le *behavior cloning*. En robotique, des travaux ont
+aussi utilisé des démonstrations pour faciliter l'exploration et préentraîner
+une politique avant de l'affiner par renforcement. [Nair et al., ICRA 2018](https://arxiv.org/abs/1709.10089)
+[Rajeswaran et al., RSS 2018](https://arxiv.org/abs/1709.10087)
+
+1. **Collecte.** On joue 256 départs complets sur les graines 2000 à 2255.
+   Le pilote réussit 255 vols. On utilise les 67 054 décisions de ces vols
+   réussis pour apprendre à prédire ses trois commandes par erreur quadratique.
+2. **Affinage.** On initialise l'acteur SAC avec les poids appris et son
+   tampon de rejeu avec les 67 347 transitions de collecte, y compris celles
+   du vol raté. SAC joue ensuite ses propres épisodes à difficulté complète.
+   Il ajuste sa politique à partir des récompenses `progress`.
+3. **Mesure.** Les graines 6000 à 6019 servent à sélectionner le checkpoint
+   d'imitation au meilleur taux de pose, avec priorité au premier en cas
+   d'égalité, puis à suivre SAC. Les graines 6100 à 6139 servent à comparer
+   ce checkpoint à la fin de l'affinage. Les graines officielles 10 000 à
+   10 099 sont réservées à l'évaluation officielle.
+
+Le pilote transmet ses commandes pendant la collecte. En évaluation,
+le réseau reçoit les 19 valeurs d'observation et produit seul les trois
+commandes en mode déterministe. Le scénario, la physique et le critère
+de réussite suivent le [contrat commun](../../CONTRACT.md).
+
+Depuis la racine du dépôt, collecte une seule fois, puis entraîne les trois
+modèles. Si le fichier de démonstrations existe déjà, réutilise-le.
+
+```powershell
+uv run --locked python -m rocket_quentin.demonstrations
+foreach ($trainingSeed in 0, 1, 2) {
+    uv run --locked python -m rocket_quentin.train_imitation --epochs 30 --sac-steps 6000 --seed $trainingSeed
+}
+```
+
+Chaque run utilise le CPU et deux couches de 128 neurones. L'imitation
+utilise des lots de 256 et un taux d'apprentissage de 0,001. L'affinage
+utilise des lots de 128, un taux de 0,0001, un facteur d'actualisation de
+0,995 et le réglage automatique de l'entropie de SAC.
+Avec `--sac-steps 0`, on s'arrête après l'imitation. Le dossier du run
+contient `config.json`, `report.json`, le modèle d'imitation dans `imitation/`
+et, si l'affinage est activé, les checkpoints dans `checkpoints/` et le modèle
+de fin de run dans `sac/`.
+
+### Affiner SAC en limitant l'écart à la politique initiale
+
+Dans cette variante, chaque mise à jour de l'acteur SAC ajoute à sa perte
+une pénalité égale à 100 fois l'erreur quadratique entre ses commandes
+actuelles et celles du réseau d'imitation sauvegardé. On mesure cet écart
+sur un lot de 256 observations tiré parmi les démonstrations réussies.
+SAC conserve sa récompense et ajuste toujours sa politique sur ses
+propres expériences et les transitions de collecte. En évaluation, seul
+l'acteur final produit les commandes.
+
+Pour reprendre exactement les mêmes poids qu'un essai précédent, remplace
+`imitation-s0-EXEMPLE` par le nom du run d'origine et utilise sa graine.
+
+```powershell
+uv run --locked python -m rocket_quentin.train_imitation --imitation-dir "players/quentin/runs/imitation-s0-EXEMPLE/imitation" --seed 0 --sac-steps 6000 --sac-anchor 100
+```
+
+Les trois variantes sont évaluées en déterministe sur les mêmes 40 départs de
+comparaison. À titre de référence, le pilote programmé y pose la fusée 40
+fois. Les deux colonnes SAC donnent le score en fin de budget.
+
+| Graine d'entraînement | Imitation seule | SAC à 6 000 décisions | SAC avec pénalité à 6 000 décisions |
+|---:|---:|---:|---:|
+| 0 | 34/40 | 0/40 | 35/40 |
+| 1 | 33/40 | 0/40 | 28/40 |
+| 2 | 30/40 | 0/40 | 26/40 |
+| Total | 97/120 | 0/120 | 89/120 |
+
+L'imitation seule produit 12 contacts trop rapides, 9 sorties de zone liées
+à l'inclinaison et 2 chutes à l'eau. Avec SAC sans pénalité, les 120 vols de
+comparaison finissent hors zone. La pénalité préserve une partie du pilotage
+appris. En fin de budget, son effet par rapport à l'imitation varie selon la
+graine et le total de réussites baisse. Les expériences de curriculum ci-dessous
+utilisent d'autres départs et budgets. Elles donnent le contexte du choix de
+l'imitation. Le tableau ci-dessus compare l'effet de l'affinage à partir des
+mêmes poids.
+
+Pour le test officiel, le candidat est choisi parmi les checkpoints SAC avec
+pénalité selon le nombre de poses en validation, avec priorité au checkpoint
+le plus tôt en cas d'égalité, puis à la plus petite graine. Cette règle a
+retenu la graine 0 à 4 000 décisions avec 20/20 en validation. Ce checkpoint
+obtient 38/40 en comparaison, avec une sortie de zone et un crash.
+
+Sur les 100 graines officielles, il obtient **91 poses**, pour un seuil de
+95. La distance médiane au centre est de 0,81 m. La vitesse verticale
+moyenne au premier contact est de 0,67 m/s et l'inclinaison moyenne de 1,51°.
+Les neuf échecs sont cinq sorties de zone liées à l'inclinaison, deux
+atterrissages durs et deux chutes à l'eau. Cet essai SAC reste sous le
+seuil de la phase 0.
+
+Pour rejouer ce checkpoint local, utilise la commande ci-dessous. Après un
+nouvel entraînement, remplace `imitation-s0-xk5eiozj` par le dossier affiché
+par le run avec `--seed 0 --sac-anchor 100`.
+
+```powershell
+uv run --locked python -m rocket_quentin.evaluate --run-dir "players/quentin/runs/imitation-s0-xk5eiozj/checkpoints/sac-04000"
+```
+
+### Comparer le coefficient d'entropie initial de SAC
+
+On reprend les trois checkpoints d'imitation des essais précédents. Les deux
+conditions utilisent la même pénalité de poids 100, le même tampon de rejeu,
+la même récompense `progress` et 6 000 décisions par graine. Le coefficient
+d'entropie démarre à 1 dans le contrôle et à 0,1 dans la variante. SAC continue
+de l'ajuster automatiquement, avec la même entropie cible dans les deux cas.
+
+On suit les checkpoints à 2 000, 4 000 et 6 000 décisions sur les graines
+de validation 6000 à 6019. On compare les modèles finaux et l'imitation de
+départ sur 40 nouveaux départs, avec les graines 6200 à 6239. Le critère
+retenu est d'améliorer l'imitation à la fin sur au moins deux graines
+d'entraînement sur trois. Pour ces graines, le score final de validation
+doit être à deux poses ou moins du meilleur checkpoint du run.
+
+Depuis la racine du dépôt, remplace `$imitationRun` par le chemin du run
+d'imitation à reprendre et utilise sa graine pour `$trainingSeed`.
+
+```powershell
+foreach ($initialEntropy in @("1", "0.1")) {
+    uv run --locked python -m rocket_quentin.train_imitation --imitation-dir "$imitationRun/imitation" --seed $trainingSeed --sac-steps 6000 --sac-anchor 100 --sac-initial-entropy $initialEntropy --entropy-comparison
+}
+```
+
+Pour comparer un checkpoint intermédiaire, passe son dossier à
+`rocket_quentin.evaluate --entropy-comparison --run-dir`.
+
+| Graine | Imitation seule | SAC à 6 000, coef. 1 | SAC à 6 000, coef. 0,1 | Validation coef. 1 (2k / 4k / 6k) | Validation coef. 0,1 (2k / 4k / 6k) |
+|---:|---:|---:|---:|---:|---:|
+| 0 | 34/40 | 36/40 | 29/40 | 18 / 20 / 18 sur 20 | 18 / 17 / 15 sur 20 |
+| 1 | 38/40 | 33/40 | 30/40 | 16 / 18 / 15 sur 20 | 17 / 16 / 14 sur 20 |
+| 2 | 28/40 | 29/40 | 30/40 | 18 / 18 / 19 sur 20 | 19 / 19 / 17 sur 20 |
+| Total | 100/120 | 98/120 | 89/120 | — | — |
+
+Le coefficient 0,1 améliore l'imitation sur une seule graine. Les trois
+scores finaux de validation baissent par rapport à leur meilleur checkpoint.
+Le réglage 0,1 échoue au critère de régularité. Après 2 000 décisions, sur
+un échantillon des observations de démonstration, ses actions déterministes
+s'écartent en moyenne d'environ 0,007 des actions imitées, contre 0,020
+avec le coefficient 1, sur l'échelle des commandes de −1 à +1.
+Le checkpoint de référence
+au coefficient 1 et à 4 000 décisions obtient 38/40 sur ces nouveaux
+départs. Aucun nouveau modèle de cet essai n'a été testé sur les graines
+officielles.
+
+### Apprendre à corriger ses propres trajectoires avec DAgger
+
+Les démonstrations initiales contiennent surtout les situations rencontrées
+par le pilote de référence. Avec DAgger, le réseau commande la fusée et le
+pilote indique en parallèle quelle commande il aurait choisie dans chaque
+situation. On ajoute ces paires observation–commande aux démonstrations
+pour entraîner le réseau aussi sur les écarts qu'il crée lui-même.
+[Ross et al., 2011](https://proceedings.mlr.press/v15/ross11a.html)
+
+Pour chaque modèle d'imitation, on fait deux tours de 32 départs complets
+(graines 3000 à 3063) et 10 époques supervisées par tour. Les exemples
+des deux tours s'accumulent avec les démonstrations réussies d'origine.
+On choisit le checkpoint sur les graines 6000 à 6019, avec priorité au
+premier en cas d'égalité. On compare ce checkpoint à l'imitation seule
+sur les 40 départs 6300 à 6339.
+
+```powershell
+uv run --locked python -m rocket_quentin.train_dagger --imitation-dir "$imitationRun/imitation"
+```
+
+| Graine | Imitation seule | Après DAgger | Corrections ajoutées |
+|---:|---:|---:|---:|
+| 0 | 34/40 | 38/40 | 17 574 |
+| 1 | 36/40 | 38/40 | 18 785 |
+| 2 | 36/40 | 38/40 | 18 518 |
+| Total | 106/120 | 114/120 | 54 877 |
+
+Sur les mêmes départs, les atterrissages durs passent de huit à quatre et
+les sorties de zone de quatre à deux. Les trois graines progressent.
+Cette comparaison mesure l'ensemble de l'étape DAgger, qui ajoute des
+corrections et de l'entraînement supervisé.
+Pour l'évaluation officielle, on retient la graine 1. Son checkpoint est
+le premier à obtenir 20/20 en validation, à la cinquième époque du
+deuxième tour. Ce modèle d'imitation supervisée obtient **96/100**, au-dessus
+du seuil de phase 0 de 95 poses. La distance médiane au centre est de
+0,21 m. Au premier contact, la vitesse verticale moyenne est de 0,85 m/s
+et l'inclinaison moyenne de 1,42°. Les quatre échecs sont trois sorties
+de zone liées à l'inclinaison et un atterrissage dur.
+
+Pour reproduire les 100 vols officiels avec le modèle sauvegardé et son
+fichier de normalisation, lance cette commande depuis la racine du dépôt.
+
+```powershell
+uv run --locked python -m rocket_quentin.evaluate --model players/quentin/models/phase0-dagger.zip
+```
 
 ### Entraîner SAC avec le curriculum
 

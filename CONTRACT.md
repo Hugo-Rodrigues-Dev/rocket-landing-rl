@@ -68,7 +68,7 @@ Chaque phase **ajoute** quelque chose à la précédente.
 | Phase | Ajout | Seuil de validation |
 |---|---|---|
 | **0** | Barge **immobile** | ≥ 95 % posées |
-| **1** | Barge mobile : vitesse horizontale aléatoire et lissée (Ornstein-Uhlenbeck, θ = 0,5 s⁻¹, σ = 1 m·s⁻¹ᐟ², bornée à 3 m/s) | ≥ 90 % |
+| **1** | Barge mobile : vitesse visée horizontale aléatoire (Ornstein-Uhlenbeck, θ = 0,5 s⁻¹, σ = 1 m·s⁻¹ᐟ², bornée à 3 m/s, tirée à chaque décision), que la barge rejoint avec une **accélération ≤ 0,5 m/s²**. La barge a une vraie vitesse : une fusée posée est entraînée par le frottement | ≥ 90 % |
 | **2** | **Carburant** : 80 kg au départ, consommation `ṁ = T / (300 s × g)`, la masse diminue. **Poussée minimale 60 %** quand le moteur tourne (moteur éteint en dessous), donc le vol stationnaire devient impossible. Réservoir vide = moteur éteint | ≥ 85 % |
 | **3** | **Vagues** : le pont monte et descend (± 0,5 m, période 8 s) et bascule (± 3° en tangage et en roulis, périodes de 6 à 10 s, phases au hasard) | ≥ 80 % |
 | **4** | **Vent** : vent moyen de 0 à 8 m/s dans une direction au hasard, rafales de ± 3 m/s, traînée `½ ρ C_d A v²` avec ρ = 1,225, C_d = 1, A = 10 m². **RCS** : couples de ± 1 000 N·m en tangage et en lacet, ± 100 N·m en roulis | ≥ 75 % |

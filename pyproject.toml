@@ -7,14 +7,23 @@ members = ["players/*"]
 [dependency-groups]
 dev = ["pytest>=8.3", "ruff>=0.8"]
 
-# PyTorch en version CPU sous Linux (la CI) : évite de télécharger CUDA pour rien.
-# macOS et Windows utilisent les paquets PyPI normaux.
+# PyTorch : CPU sous Linux (la CI, évite de télécharger CUDA pour rien),
+# CUDA sous Windows (PC avec carte NVIDIA), paquets PyPI normaux sous macOS.
 [tool.uv.sources]
-torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+torch = [
+    { index = "pytorch-cpu", marker = "sys_platform == 'linux'" },
+    { index = "pytorch-cuda", marker = "sys_platform == 'win32'" },
+]
 
 [[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+# Seul index CUDA qui publie torch 2.15 : pilote NVIDIA récent requis (CUDA 13.2).
+[[tool.uv.index]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu132"
 explicit = true
 
 [tool.ruff]

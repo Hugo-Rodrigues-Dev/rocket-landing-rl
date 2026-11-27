@@ -1,0 +1,27 @@
+<mujoco model="quentin_phase_0">
+    <option timestep="0.005" gravity="0 0 -9.81"/>
+
+    <worldbody>
+        <geom name="sea" type="plane" size="0 0 0.1" rgba="0.1 0.32 0.5 1"/>
+
+        <!-- Pour une boîte, size donne les demi-dimensions. Le dessus du pont est à z = 1 m. -->
+        <geom name="deck" type="box" pos="0 0 0.5" size="7.5 7.5 0.5" rgba="0.32 0.36 0.39 1"/>
+
+        <!-- Les extrémités des jambes sont à 15 cm du pont pour l'essai de chute. -->
+        <body name="rocket" pos="0 0 6.77">
+            <freejoint name="rocket_free"/>
+            <!-- Pour un cylindre, size donne le rayon et la demi-hauteur. -->
+            <geom name="hull" type="cylinder" size="0.5 5" mass="900" rgba="0.9 0.92 0.95 1"/>
+            <!-- Le site marque le point d'application de la poussée, sans masse ni collision. -->
+            <site name="nozzle" pos="0 0 -5" size="0.1" rgba="0.18 0.18 0.18 1"/>
+            <geom name="leg_ne" type="capsule" fromto="0.3 0.3 -4 1.5 1.5 -5.5"
+                  size="0.12" mass="25" rgba="0.9 0.44 0.18 1"/>
+            <geom name="leg_nw" type="capsule" fromto="-0.3 0.3 -4 -1.5 1.5 -5.5"
+                  size="0.12" mass="25" rgba="0.9 0.44 0.18 1"/>
+            <geom name="leg_se" type="capsule" fromto="0.3 -0.3 -4 1.5 -1.5 -5.5"
+                  size="0.12" mass="25" rgba="0.9 0.44 0.18 1"/>
+            <geom name="leg_sw" type="capsule" fromto="-0.3 -0.3 -4 -1.5 -1.5 -5.5"
+                  size="0.12" mass="25" rgba="0.9 0.44 0.18 1"/>
+        </body>
+    </worldbody>
+</mujoco>

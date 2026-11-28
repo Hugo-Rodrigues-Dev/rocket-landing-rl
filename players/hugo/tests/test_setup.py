@@ -1,4 +1,4 @@
-"""Vérifie que la pile du projet s'installe et fonctionne. À compléter avec vos propres tests."""
+"""Vérifie l'installation de la pile et le fonctionnement de base de MuJoCo."""
 
 import gymnasium as gym
 import mujoco
@@ -9,11 +9,13 @@ import wandb
 
 
 def test_stack_imports():
+    """Vérifie que les bibliothèques du projet exposent une version après import."""
     for module in (gym, mujoco, stable_baselines3, torch, wandb):
         assert module.__version__
 
 
 def test_mujoco_simulates_free_fall():
+    """Compare une chute libre MuJoCo à la trajectoire analytique après une seconde."""
     model = mujoco.MjModel.from_xml_string(
         '<mujoco><worldbody><body><freejoint/><geom size="0.5"/></body></worldbody></mujoco>'
     )

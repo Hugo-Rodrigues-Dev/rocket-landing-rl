@@ -1,0 +1,55 @@
+<!-- Scène physique de phase 0. Python choisit l'état de départ et applique la poussée. -->
+<mujoco model="rocket_hugo_phase0">
+  <compiler angle="degree"/>
+  <!-- Dix sous-pas Euler de 5 ms correspondent à une décision de 50 ms. -->
+  <option timestep="0.005" gravity="0 0 -9.81" integrator="Euler"/>
+  <visual>
+    <map zfar="40"/>
+  </visual>
+  <asset>
+    <material name="ocean" rgba="0.10 0.32 0.47 1"/>
+    <material name="deck" rgba="0.24 0.30 0.36 1"/>
+    <material name="marking" rgba="1 0.73 0.21 1"/>
+  </asset>
+  <default>
+    <!-- Les masques autorisent les contacts entre le monde et la fusée. La peinture est décorative. -->
+    <geom friction="0.9 0.01 0.001"/>
+    <default class="world">
+      <geom contype="1" conaffinity="2"/>
+    </default>
+    <default class="rocket">
+      <geom contype="2" conaffinity="1" rgba="0.85 0.89 0.91 1"/>
+    </default>
+    <default class="paint">
+      <geom contype="0" conaffinity="0" material="marking"/>
+    </default>
+  </default>
+  <worldbody>
+    <!-- La mer est à z=0. MuJoCo exprime la taille de la boîte en demi-dimensions. -->
+    <light pos="20 -20 100" dir="-0.2 0.2 -1"/>
+    <geom name="sea" class="world" type="plane" size="130 130 1" material="ocean"/>
+    <geom name="deck" class="world" type="box" pos="0 0 0.5" size="7.5 7.5 0.5" material="deck"/>
+    <geom class="paint" type="box" pos="0 0 1.002" size="2.0 0.07 0.002"/>
+    <geom class="paint" type="box" pos="0 0 1.002" size="0.07 2.0 0.002"/>
+    <site name="deck_center" pos="0 0 1" size="0.01" rgba="0 0 0 0"/>
+    <body name="rocket" pos="0 0 12" childclass="rocket">
+      <!-- Corps libre : trois translations et trois rotations. L'inertie est définie pour l'ensemble. -->
+      <freejoint name="flight"/>
+      <inertial pos="0 0 0" mass="1000" diaginertia="8395.833 8395.833 125"/>
+      <geom name="hull" type="cylinder" size="0.5 5"/>
+      <geom class="paint" type="cylinder" pos="0 0 3.7" size="0.505 0.36"/>
+      <!-- Les supports et les pieds ont des géométries distinctes pour classer leurs contacts. -->
+      <geom name="leg_ne" type="capsule" fromto="0.25 0.25 -3.9 1.15 1.15 -5.0" size="0.07"/>
+      <geom name="leg_nw" type="capsule" fromto="-0.25 0.25 -3.9 -1.15 1.15 -5.0" size="0.07"/>
+      <geom name="leg_se" type="capsule" fromto="0.25 -0.25 -3.9 1.15 -1.15 -5.0" size="0.07"/>
+      <geom name="leg_sw" type="capsule" fromto="-0.25 -0.25 -3.9 -1.15 -1.15 -5.0" size="0.07"/>
+      <geom name="foot_ne" type="sphere" pos="1.15 1.15 -5.15" size="0.2"/>
+      <geom name="foot_nw" type="sphere" pos="-1.15 1.15 -5.15" size="0.2"/>
+      <geom name="foot_se" type="sphere" pos="1.15 -1.15 -5.15" size="0.2"/>
+      <geom name="foot_sw" type="sphere" pos="-1.15 -1.15 -5.15" size="0.2"/>
+      <!-- Repères locaux pour mesurer la hauteur et appliquer la force au point de poussée. -->
+      <site name="base" pos="0 0 -5.35" size="0.01" rgba="0 0 0 0"/>
+      <site name="nozzle" pos="0 0 -5" size="0.18" rgba="1 0.42 0.13 1"/>
+    </body>
+  </worldbody>
+</mujoco>

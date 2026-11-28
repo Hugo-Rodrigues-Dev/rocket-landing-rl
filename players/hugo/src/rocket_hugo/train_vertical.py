@@ -19,12 +19,11 @@ DEVELOPMENT_SEEDS = range(5100, 5120)
 TEST_SEEDS = range(6100, 6120)
 
 
+# Évalue la politique déterministe sur les départs donnés, sans mise à jour.
+#
+# Compte les issues, calcule la moyenne des retours et mesure la vitesse
+# moyenne sur les seuls épisodes qui touchent le pont.
 def evaluate(model, seeds):
-    """Évalue la politique déterministe sur les départs donnés, sans mise à jour.
-
-    Compte les issues, calcule la moyenne des retours et mesure la vitesse
-    moyenne sur les seuls épisodes qui touchent le pont.
-    """
     env = VerticalLandingEnv()
     outcomes = Counter()
     speeds = []
@@ -33,12 +32,14 @@ def evaluate(model, seeds):
         obs, _ = env.reset(seed=seed)
         score = 0.0
         while True:
+            # Le rejeu déterministe enlève le tirage des actions pour comparer les versions.
             action, _ = model.predict(obs, deterministic=True)
             obs, reward, terminated, truncated, info = env.step(action)
             score += reward
             if terminated or truncated:
                 outcomes[info["outcome"]] += 1
                 if info["impact_vertical_m_s"] is not None:
+                    # On rapporte l'intensité du contact, indépendante du signe de la vitesse.
                     speeds.append(abs(info["impact_vertical_m_s"]))
                 returns.append(score)
                 break
@@ -51,12 +52,11 @@ def evaluate(model, seeds):
     }
 
 
+# Entraîne un PPO sur CPU et sauvegarde ses versions dans un dossier neuf.
+#
+# Mesure chaque version sur les mêmes départs de développement. Recharge
+# le dernier réseau depuis son fichier pour le tester sur d'autres graines.
 def main():
-    """Entraîne un PPO sur CPU et sauvegarde ses versions dans un dossier neuf.
-
-    Mesure chaque version sur les mêmes départs de développement. Recharge
-    le dernier réseau depuis son fichier pour le tester sur d'autres graines.
-    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--steps", type=int, default=32768)
     parser.add_argument("--every", type=int, default=8192)

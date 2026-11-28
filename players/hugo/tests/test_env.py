@@ -9,8 +9,8 @@ from rocket_hugo.env import RocketLandingEnv
 from rocket_hugo.vertical import VerticalState
 
 
+# Vérifie la conformité Gymnasium et le caractère reproductible du départ.
 def test_gymnasium_api_and_seeded_start():
-    """Vérifie la conformité Gymnasium et le caractère reproductible du départ."""
     env = RocketLandingEnv()
     check_env(env, skip_render_check=True)
     obs, _ = env.reset(seed=12)
@@ -20,9 +20,9 @@ def test_gymnasium_api_and_seeded_start():
     assert np.linalg.norm(obs[:2]) * 100 <= 30
 
 
+# Compare trois commandes verticales aux vitesses calculées à la main.
 @pytest.mark.parametrize(("action", "expected_speed"), [(-1, -10.4905), (0, -10), (1, -9.5095)])
 def test_vertical_commands_match_analytical_speed(action, expected_speed):
-    """Compare trois commandes verticales aux vitesses calculées à la main."""
     env = RocketLandingEnv()
     env.reset(options={"start": "vertical"})
     obs, reward, terminated, truncated, info = env.step((action, 0, 0))
@@ -31,8 +31,8 @@ def test_vertical_commands_match_analytical_speed(action, expected_speed):
     assert reward == 0 and not terminated and not truncated
 
 
+# Vérifie qu'une tuyère orientée déplace la fusée et produit le couple attendu.
 def test_gimbal_causes_translation_and_rotation():
-    """Vérifie qu'une tuyère orientée déplace la fusée et produit le couple attendu."""
     env = RocketLandingEnv()
     env.reset(options={"start": "vertical"})
     obs, *_ = env.step((0, 1, 0))
@@ -40,11 +40,11 @@ def test_gimbal_causes_translation_and_rotation():
     assert obs[12] < 0
 
 
+# Compare les issues et récompenses d'une chute libre et d'une arrivée freinée.
 @pytest.mark.parametrize(
     ("brake", "outcome", "reward"), [(False, "hard_landing", -100), (True, "landed", 100)]
 )
 def test_first_contact_speed_drives_the_outcome(brake, outcome, reward):
-    """Compare les issues et récompenses d'une chute libre et d'une arrivée freinée."""
     env = RocketLandingEnv()
     obs, _ = env.reset(options={"start": "vertical"})
     for _ in range(600):
@@ -61,8 +61,8 @@ def test_first_contact_speed_drives_the_outcome(brake, outcome, reward):
         np.testing.assert_array_equal(obs[-4:], np.ones(4))
 
 
+# Vérifie qu'un vol stationnaire atteint 30 s et se termine par troncature.
 def test_hover_times_out_instead_of_terminating():
-    """Vérifie qu'un vol stationnaire atteint 30 s et se termine par troncature."""
     env = RocketLandingEnv()
     env.reset(options={"start": "vertical"})
     env.data.qvel[:] = 0

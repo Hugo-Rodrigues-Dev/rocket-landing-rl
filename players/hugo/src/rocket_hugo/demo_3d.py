@@ -26,36 +26,42 @@ OUTCOMES = {
 }
 
 
+# Ajuste le cadrage pour garder la fusée et la barge visibles durant la descente.
 def _frame_descent(camera, observation):
-    """Ajuste le cadrage pour garder la fusée et la barge visibles durant la descente."""
+    # Les trois premières observations sont des distances divisées par 100 m.
+    # Viser à mi-chemin du pont et de la fusée laisse les deux dans le champ.
     height_m = max(0.0, float(observation[2]) * 100)
     camera.lookat[:] = (float(observation[0]) * 50, float(observation[1]) * 50, 0.5 * height_m + 6)
     camera.distance = 25 + 1.35 * height_m
 
 
+# Choisit la commande du scénario, fixe, aléatoire ou calculée par une règle manuelle.
 def _action(mode, observation, rng):
-    """Choisit la commande du scénario, fixe, aléatoire ou calculée par une règle manuelle."""
     if mode in FIXED_ACTIONS:
         return FIXED_ACTIONS[mode]
     if mode == "random":
         return rng.uniform(-1, 1, size=3)
 
+    # La règle de freinage attend des mètres et des m/s, comme dans la démo verticale.
     height, speed = float(observation[2]) * 100, float(observation[5]) * 20
     thrust = braking_action(VerticalState(height, speed))
     gimbal_x = 0.0
     if mode == "tilt-stabilize":
-        # Diagnostic dans le plan yz. Une tuyère positive produit un couple autour de -x.
+        # Les composantes y et z de l'axe de la fusée donnent son angle dans le plan yz.
         angle_x = atan2(-observation[10], observation[11])
         rate_x = float(observation[12]) * 2
+        # Une tuyère positive produit un couple autour de -x. Le terme de vitesse
+        # amortit le redressement, et la division convertit l'angle en commande normalisée.
         gimbal_x = float(np.clip((1.2 * angle_x + 0.8 * rate_x) / GIMBAL_LIMIT_RAD, -1, 1))
     return thrust, gimbal_x, 0.0
 
 
+# Convertit les observations normalisées en unités lisibles et rafraîchit le visualiseur.
 def _draw_hud(window, mode, obs, action, info, paused, controls=None):
-    """Convertit les observations normalisées en unités lisibles et rafraîchit le visualiseur."""
     status = OUTCOMES[info["outcome"]]
     if paused and info["outcome"] == "flying":
         status = "Pause"
+    # obs[11] est le cosinus de l'inclinaison. Le bornage protège arccos des arrondis.
     tilt = degrees(acos(float(np.clip(obs[11], -1, 1))))
     thrust = 0.0 if action is None else thrust_newtons(action[0]) / MAX_THRUST_N * 100
     gimbal = "-" if action is None else f"{action[1] * 10:+.1f} / {action[2] * 10:+.1f} deg"
@@ -94,8 +100,8 @@ def _draw_hud(window, mode, obs, action, info, paused, controls=None):
     window.sync()
 
 
+# Prépare le type de départ et la source aléatoire associés au scénario.
 def _reset(env, mode, seed):
-    """Prépare le type de départ et la source aléatoire associés au scénario."""
     start = "vertical"
     if mode.startswith("tilt-"):
         start = "tilted"
@@ -105,12 +111,11 @@ def _reset(env, mode, seed):
     return obs, info, np.random.default_rng(seed)
 
 
+# Traite les raccourcis, avance la simulation et rapporte l'issue du scénario.
+#
+# En mode sans fenêtre, termine après un vol. Avec la fenêtre, conserve
+# l'image finale pour permettre de changer de scénario ou de recommencer.
 def main():
-    """Traite les raccourcis, avance la simulation et rapporte l'issue du scénario.
-
-    En mode sans fenêtre, termine après un vol. Avec la fenêtre, conserve
-    l'image finale pour permettre de changer de scénario ou de recommencer.
-    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=MODES, default="brake")
     parser.add_argument("--seed", type=int, default=12)
@@ -138,6 +143,7 @@ def main():
         while window is None or window.is_running():
             frame_start = perf_counter()
             single_step = False
+            # Le visualiseur poste les touches dans une file. Seule cette boucle modifie le vol.
             while True:
                 try:
                     key = keys.get_nowait()
@@ -170,6 +176,7 @@ def main():
                         break
             if window:
                 _draw_hud(window, mode, obs, action, info, paused)
+                # Cadence le rendu en temps réel et retire le temps passé à calculer l'image.
                 sleep(max(0, CONTROL_DT_S - (perf_counter() - frame_start)))
 
 

@@ -17,12 +17,11 @@ from rocket_hugo.vertical import CONTROL_DT_S
 from rocket_hugo.vertical_env import VerticalLandingEnv
 
 
+# Recharge les réseaux d'un essai et rejoue chacun depuis la graine choisie.
+#
+# Le mode console affiche les issues. La fenêtre permet de changer de réseau
+# et d'avancer pas à pas. MuJoCo dessine la trajectoire calculée par l'exercice.
 def main():
-    """Recharge les réseaux d'un essai et rejoue chacun depuis la graine choisie.
-
-    Le mode console affiche les issues. La fenêtre permet de changer de réseau
-    et d'avancer pas à pas. MuJoCo dessine la trajectoire calculée par l'exercice.
-    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", type=Path, required=True)
     parser.add_argument(
@@ -101,7 +100,9 @@ def main():
             # Convertit la hauteur relative au pont en position du corps dans la scène.
             data.qpos[2] = deck_z - bottom_z + state.height_m
             data.time = info["time_s"]
+            # Met à jour la scène à cette pose, sans avancer sa physique en 3D.
             mujoco.mj_forward(model, data)
+            # Adapte les deux mesures de l'exercice au format utilisé par l'affichage 3D.
             display_obs = np.zeros(19)
             display_obs[2] = state.height_m / 100
             display_obs[5] = state.velocity_m_s / 20

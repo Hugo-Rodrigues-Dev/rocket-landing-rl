@@ -4,6 +4,72 @@ Environnement et agents de Hugo. Le [contrat](../../CONTRACT.md) définit les sc
 
 Le [guide pas à pas](GUIDE.md) explique le code actuel, les outils, la boucle d'apprentissage et les tests et rejeux prévus à chaque étape.
 
+Pour l'expérience sur les départs complets, voir la [comparaison PPO/SAC par phase](comparaisons/README.md).
+Les réglages des deux algorithmes vivent dans `algorithms.py`. Ils partagent le simulateur `env.py`,
+le protocole `phase0.py`, l'entraînement `train_phase0.py` et l'évaluation `evaluate_phase0.py`.
+
+## Phase 0 complète, pilotage assisté
+
+PPO et SAC franchissent le seuil du contrat avec **98 poses sur 100 chacun**. Les réseaux
+apprennent des corrections sur les trois commandes d'un pilote manuel. Le pilote seul obtient
+97 poses et la meilleure précision. Les modèles évalués sont dans `models/`. Voir la
+[fiche de phase 0](comparaisons/phase-0.md) pour les métriques, les résultats par graine et les
+commandes pour évaluer ou rejouer PPO et SAC. Le mode réseau seul reste à mesurer.
+
+Pour comparer les **trois pilotes dans une seule fenêtre**, depuis la racine avec la `.venv` locale :
+
+```powershell
+$env:PYTHONPATH = (Resolve-Path players/hugo/src).Path
+.\.venv\Scripts\python.exe -m rocket_hugo.demo_3d --mode compare --seed 10046
+```
+
+La comparaison démarre en pause. Les touches affichées en bas contrôlent le rejeu :
+
+| Touche | Effet |
+|---|---|
+| `1` / `2` / `3` | Pilote seul / pilote + PPO / pilote + SAC. Les trois repartent du même état. |
+| `D` | Alterne entre les départs 10 046 et 7 200. Réinitialise les trois résultats affichés. |
+| `V` / `B` | Recule / avance parmi les versions d'entraînement enregistrées et recharge le vol en pause. |
+| `P` / `N` / `R` | Lecture ou pause / un pas de simulation / rejouer le vol courant. |
+
+La **graine de départ** fixe la position, la vitesse et l'orientation de la fusée au début du
+vol. `--seed` permet de choisir d'autres départs. Le **nombre de décisions apprises** sélectionne
+une version de PPO ou SAC. Il ne modifie pas le pilote seul ni l'état initial du vol.
+Le visualiseur joue les commandes de façon déterministe : rejouer le même pilote, le même départ
+et la même version donne le même vol. Le tableau à droite compare les résultats au point
+d'entraînement sélectionné.
+
+Les versions intermédiaires sont des sauvegardes à **0, 2 048, 4 096 et 6 144 décisions**.
+La version finale des deux modèles de phase 0 correspond à **8 192 décisions**. Même à zéro,
+PPO et SAC ajoutent une correction issue d'un réseau initialisé à la commande du pilote manuel,
+qui sait déjà atterrir dans beaucoup de cas. Un premier contact réussi ne prouve donc pas
+que le réseau a appris quoi que ce soit.
+
+Pour choisir une version et un départ depuis le terminal :
+
+```powershell
+.\.venv\Scripts\python.exe -m rocket_hugo.demo_3d --mode compare --seed 7200 --checkpoint 2048
+```
+
+Sur le départ 10 046, à 8 192 décisions, seul le pilote de référence échoue. Le départ 7 200
+permet de comparer trois poses. Ajoute `--headless` pour jouer les trois vols dans le terminal.
+
+Les sauvegardes intermédiaires restent dans `runs/`. Sur une autre copie du dépôt, on peut
+recréer l'historique dans les dossiers attendus par le visualiseur :
+
+```powershell
+.\.venv\Scripts\python.exe -m rocket_hugo.train_phase0 --algo ppo --seed 2 --snapshot-every 2048 --out players/hugo/runs/phase0-history-ppo
+.\.venv\Scripts\python.exe -m rocket_hugo.train_phase0 --algo sac --seed 1 --snapshot-every 2048 --out players/hugo/runs/phase0-history-sac
+```
+
+Le visualiseur indique les versions effectivement disponibles. Sans les dossiers d'historique,
+il reste possible de comparer les deux modèles finaux dans `models/`.
+
+Le mode `compare` est la vue **phase 0**, avec barge fixe et modèles propres à cette phase.
+Quand on ajoutera la phase 1, on pourra réutiliser la même fenêtre avec un choix de phase :
+la scène, les modèles et les mesures viendront alors de la phase choisie. La vue phase 0
+restera accessible avec ses propres départs et versions.
+
 ## Rejouer le premier apprentissage PPO
 
 Depuis la racine du dépôt, avec PyTorch et Stable-Baselines3 installés dans `.venv` :
